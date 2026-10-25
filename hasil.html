@@ -9,10 +9,16 @@
     <div><label for="per" style="margin:0 0 3px">Tahun ajaran / semester</label><select id="per"></select></div></div>
   <div id="err" class="msg err hid"></div><div id="load" class="empty">Memuat hasil belajarmu…</div>
   <div id="isi" hidden>
-    <div class="card"><h2>Rata-rata nilai per mata pelajaran</h2><div class="grid" id="rata"></div></div>
+    <div class="card" id="kartu-akhir" style="text-align:center">
+      <div class="mut">Nilai Akhir</div>
+      <div class="stat" id="akhir" style="font-size:3rem;line-height:1.1"></div>
+      <div id="status" style="margin:6px 0"></div>
+      <div class="mut" id="rincian"></div>
+      <div id="remedial" style="margin-top:12px"></div>
+    </div>
+    <div class="card"><h2>Nilai dari Guru per mata pelajaran</h2><p class="mut" style="margin:-4px 0 10px">Rata-rata seluruh nilai tiap kategori; nilai mapel dihitung dari bobot kategori.</p><div class="tw"><table id="tm"></table></div></div>
+    <div class="card"><h2>Hasil ulangan online</h2><div class="tw"><table id="tu"></table></div><p class="mut" id="tuc" style="margin-top:8px"></p></div>
     <div class="card"><h2>Kehadiran</h2><div class="grid" id="hadir"></div><div class="tw" style="margin-top:12px"><table id="tabs"></table></div></div>
-    <div class="card"><h2>Nilai dari guru</h2><div class="tw"><table id="tn"></table></div></div>
-    <div class="card"><h2>Hasil ulangan online</h2><div class="tw"><table id="tu"></table></div></div>
     <div class="card"><h2>Ganti password</h2><p class="mut">Disarankan mengganti password awal dari sekolah.</p><div class="row"><input id="p1" type="password" placeholder="Password lama" class="grow" autocomplete="current-password"><input id="p2" type="password" placeholder="Password baru (min. 6)" class="grow" autocomplete="new-password"><button class="btn" id="pw">Simpan</button></div><div id="pm"></div></div>
   </div>
 </main>
@@ -29,14 +35,29 @@ async function muat(per){
   $('load').hidden=true;
   if(!r.ok){$('err').textContent=NESACIS.pesan(r.error);$('err').classList.remove('hid');return}
   $('per').innerHTML=r.periodes.map(p=>`<option value="${esc(p.id)}" ${p.id===r.periode?'selected':''}>${esc(p.label)}</option>`).join('');
-  $('jd').textContent='Hasil Belajar '+r.siswa.nama;$('sub').textContent='NISN '+r.siswa.nisn+' · Kelas '+r.siswa.kelas+' · No. absen '+r.siswa.absen;
-  $('rata').innerHTML=r.rata.length?r.rata.map(x=>`<div class="tile" style="cursor:default"><span>${esc(x.mapel)}</span><div class="stat">${fm(x.rata)}</div><div class="bar"><i style="width:${Math.min(100,x.rata)}%"></i></div><span>${x.jumlah} nilai</span></div>`).join(''):(r.rekapAda?'<p class="empty">Belum ada nilai dari guru pada periode ini.</p>':'<p class="empty">Belum ada rekap nilai untukmu pada periode ini. Rekap muncul setelah gurumu menyimpan nilai atau absensi.</p>');
+  $('jd').textContent='Hasil Belajar '+r.siswa.nama;$('sub').textContent='NISN '+r.siswa.nisn+' · Kelas '+r.siswa.kelas;
+  // --- nilai akhir
+  if(r.akhir===null){
+    $('akhir').textContent='–';$('status').innerHTML='';$('rincian').textContent=r.rekapAda?'Belum ada nilai yang bisa dihitung pada periode ini.':'Belum ada rekap nilai untukmu pada periode ini. Rekap muncul setelah gurumu menyimpan nilai atau absensi.';$('remedial').innerHTML='';
+  }else{
+    $('akhir').textContent=fm(r.akhir);
+    $('status').innerHTML=r.tuntas?'<span class="badge ok" style="font-size:.95rem;padding:4px 14px">TUNTAS</span>':'<span class="badge bad" style="font-size:.95rem;padding:4px 14px">BELUM TUNTAS</span>';
+    const bagian=[];if(r.nilaiGuru!==null)bagian.push(`Nilai dari Guru <b>${fm(r.nilaiGuru)}</b>${r.nilaiOnline!==null?' ('+r.bobot.guru+'%)':''}`);
+    if(r.nilaiOnline!==null)bagian.push(`Ulangan Online <b>${fm(r.nilaiOnline)}</b>${r.nilaiGuru!==null?' ('+r.bobot.online+'%)':''}`);
+    $('rincian').innerHTML=bagian.join(' + ');
+    $('remedial').innerHTML=(r.remedial||[]).map(x=>`<div style="margin:6px 0"><a class="btn" href="ulangan.html?u=${encodeURIComponent(x.kode)}">Kerjakan Test Remedial</a><div class="mut" style="margin-top:3px">${esc(x.judul)}${x.percobaan?' · sudah '+x.percobaan+'× dikerjakan':''}</div></div>`).join('');
+  }
+  // --- nilai dari guru per mapel
+  const c=v=>v===null||v===undefined?'<span class="mut">–</span>':fm(v);
+  $('tm').innerHTML=r.mapel.length?'<thead><tr><th>Mata pelajaran</th><th>Sikap</th><th>Keaktifan</th><th>Tugas</th><th>Ulangan</th><th>Nilai mapel</th></tr></thead><tbody>'+r.mapel.map(m=>`<tr><td>${esc(m.mapel)}</td><td>${c(m.sikap)}</td><td>${c(m.keaktifan)}</td><td>${c(m.tugas)}</td><td>${c(m.ulangan)}</td><td><b>${c(m.nilai)}</b></td></tr>`).join('')+'</tbody>':'<tbody><tr><td class="empty">Belum ada nilai dari guru.</td></tr></tbody>';
+  // --- ulangan online
+  $('tu').innerHTML=r.ulangan.length?'<thead><tr><th>Tanggal</th><th>Ulangan</th><th>Mapel</th><th>Nilai</th><th>Remedial (tertinggi)</th><th>Nilai akhir ulangan</th></tr></thead><tbody>'+r.ulangan.map(u=>`<tr><td>${tgl(u.waktu)}</td><td>${esc(u.judul)}</td><td>${esc(u.mapel)}</td><td>${fm(u.nilai)}</td><td>${u.remedial?fm(u.remedial.nilai)+' <span class="mut">('+u.remedial.percobaan+'×)</span>':'<span class="mut">–</span>'}</td><td><b>${fm(u.akhir)}</b></td></tr>`).join('')+'</tbody>':'<tbody><tr><td class="empty">Belum ada hasil ulangan online.</td></tr></tbody>';
+  $('tuc').textContent=r.ulanganTersembunyi?r.ulanganTersembunyi+' ulangan belum dipublikasikan oleh guru.':'';
+  // --- kehadiran
   const t=r.absensi.total,jm=t.H+t.I+t.S+t.A;
   $('hadir').innerHTML=jm?[['Hadir',t.H],['Izin',t.I],['Sakit',t.S],['Alpa',t.A]].map(a=>`<div class="tile" style="cursor:default"><span>${a[0]}</span><div class="stat">${a[1]}</div></div>`).join(''):'<p class="empty">Belum ada data kehadiran.</p>';
   const pm=Object.keys(r.absensi.perMapel);
   $('tabs').innerHTML=pm.length?'<thead><tr><th>Mata pelajaran</th><th>Hadir</th><th>Izin</th><th>Sakit</th><th>Alpa</th></tr></thead><tbody>'+pm.map(m=>{const a=r.absensi.perMapel[m];return `<tr><td>${esc(m)}</td><td>${a.H}</td><td>${a.I}</td><td>${a.S}</td><td>${a.A}</td></tr>`}).join('')+'</tbody>':'';
-  $('tn').innerHTML=r.nilai.length?'<thead><tr><th>Tanggal</th><th>Mata pelajaran</th><th>Jenis</th><th>Nilai</th><th>Guru</th><th>Ket.</th></tr></thead><tbody>'+r.nilai.map(n=>`<tr><td>${tgl(n.tanggal)}</td><td>${esc(n.mapel)}</td><td>${esc(n.kategori)}</td><td><b>${fm(n.nilai)}</b></td><td>${esc(n.guru)}</td><td>${esc(n.keterangan)}</td></tr>`).join('')+'</tbody>':'<tbody><tr><td class="empty">Belum ada nilai.</td></tr></tbody>';
-  $('tu').innerHTML=r.ulangan.length?'<thead><tr><th>Tanggal</th><th>Ulangan</th><th>Mapel</th><th>Nilai</th><th>Benar/Salah/Kosong</th></tr></thead><tbody>'+r.ulangan.map(u=>`<tr><td>${tgl(u.waktu)}</td><td>${esc(u.judul)}</td><td>${esc(u.mapel)}</td><td>${u.tampil?`<b>${fm(u.nilai)}</b> <span class="badge ${u.nilai>=u.kkm?'ok':'bad'}">${u.nilai>=u.kkm?'Tuntas':'Belum tuntas'}</span>`:'<span class="mut">Disembunyikan guru</span>'}</td><td>${u.tampil?u.benar+' / '+u.salah+' / '+u.kosong:'-'}</td></tr>`).join('')+'</tbody>':'<tbody><tr><td class="empty">Belum ada hasil ulangan.</td></tr></tbody>';
   $('isi').hidden=false;
 }
 </script></body></html>
