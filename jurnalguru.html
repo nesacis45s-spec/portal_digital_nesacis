@@ -732,7 +732,21 @@ function initials(name){
   const parts = name.trim().split(/\s+/);
   return ((parts[0]?.[0]||"") + (parts[1]?.[0]||"")).toUpperCase() || "G";
 }
-function saveLocal(key, val){ try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){ console.error(e); } cloudMarkDirty(key); }
+function freeSnapshots(){ try{ Object.keys(localStorage).filter(k=>k.indexOf(SNAP_PREFIX) === 0).forEach(k=>localStorage.removeItem(k)); }catch(e){} }
+let _stoWarnAt = 0;
+function warnStorageFull(){
+  if (Date.now() - _stoWarnAt < 30000) return; _stoWarnAt = Date.now();
+  notifyError("Penyimpanan perangkat penuh: perubahan terakhir belum tersimpan. Hapus data/cache situs lain di browser, atau gunakan komputer.");
+}
+/** Menyimpan ke perangkat. Bila penuh: kosongkan salinan cadangan lalu coba lagi. Mengembalikan false bila tetap gagal
+ *  (dalam kasus itu TIDAK ditandai "perlu dikirim", agar data lama di perangkat tidak menimpa data di server). */
+function saveLocal(key, val){
+  const str = JSON.stringify(val); let ok = true;
+  try{ localStorage.setItem(key, str); }
+  catch(e){ freeSnapshots(); try{ localStorage.setItem(key, str); }catch(e2){ ok = false; console.error(e2); warnStorageFull(); } }
+  if (ok) cloudMarkDirty(key);
+  return ok;
+}
 function loadLocal(key, fallback=null){ try{ const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }catch(e){ return fallback; } }
 function removeLocal(key){ try{ localStorage.removeItem(key); }catch(e){} cloudMarkDirty(key); }
 
@@ -826,8 +840,9 @@ function loadStudentsFromDevice(){
 function getStudentById(id){ return appState.students.find(s=>s.id===id); }
 
 function persistStudents(){
-  saveLocal(STORAGE_KEYS.STUDENTS, appState.students);
+  const ok = saveLocal(STORAGE_KEYS.STUDENTS, appState.students);
   appState.classes = getUniqueClasses(appState.students);
+  return ok;
 }
 
 /**
@@ -1320,7 +1335,7 @@ function loadProfileFromDevice(){
   const p = loadLocal(STORAGE_KEYS.PROFILE, null);
   appState.profile = Object.assign({ namaGuru:"", nip:"", mataPelajaran:"" }, p || {});
 }
-function persistProfile(){ saveLocal(STORAGE_KEYS.PROFILE, appState.profile); }
+function persistProfile(){ return saveLocal(STORAGE_KEYS.PROFILE, appState.profile); }
 /* =========================================================================
    7. APP SHELL / NAVIGATION
    ========================================================================= */
@@ -2341,7 +2356,7 @@ function loadJournalsFromDevice(){
   appState.journals = (Array.isArray(list) ? list : []).map(normalizeJournal);
   return appState.journals;
 }
-function persistJournals(){ saveLocal(STORAGE_KEYS.JOURNALS, appState.journals); }
+function persistJournals(){ return saveLocal(STORAGE_KEYS.JOURNALS, appState.journals); }
 
 function normalizeJournal(j){
   return {
@@ -2393,7 +2408,7 @@ function loadScheduleFromDevice(){
   appState.schedule = loadLocal(STORAGE_KEYS.SCHEDULE, []) || [];
   return appState.schedule;
 }
-function persistSchedule(){ saveLocal(STORAGE_KEYS.SCHEDULE, appState.schedule); }
+function persistSchedule(){ return saveLocal(STORAGE_KEYS.SCHEDULE, appState.schedule); }
 function getScheduleById(id){ return appState.schedule.find(s=>s.id===id); }
 
 function renderScheduleDayCard(day){
@@ -2842,7 +2857,7 @@ function loadAttendanceFromDevice(){
   appState.attendance = loadLocal(STORAGE_KEYS.ATTENDANCE, []) || [];
   return appState.attendance;
 }
-function persistAttendance(){ saveLocal(STORAGE_KEYS.ATTENDANCE, appState.attendance); }
+function persistAttendance(){ return saveLocal(STORAGE_KEYS.ATTENDANCE, appState.attendance); }
 
 const STATUS_LABEL = { H:"Hadir", I:"Izin", S:"Sakit", A:"Alpa" };
 const STATUS_BADGE_CLASS = { H:"badge-green", I:"badge-blue", S:"badge-yellow", A:"badge-red" };
@@ -3027,7 +3042,7 @@ function loadScoresFromDevice(){
   appState.scores = loadLocal(STORAGE_KEYS.SCORES, []) || [];
   return appState.scores;
 }
-function persistScores(){ saveLocal(STORAGE_KEYS.SCORES, appState.scores); }
+function persistScores(){ return saveLocal(STORAGE_KEYS.SCORES, appState.scores); }
 
 const SCORE_CATEGORIES = ["Tugas","Sikap","Keaktifan","Ulangan"];
 let scoreSessionState = { journal:null, category:"Tugas", records:[], search:"", showAbsent:false };
@@ -4278,7 +4293,7 @@ function buildNotesPdf(notes, meta){
 
 
 function loadNotes(){ const l = loadLocal(STORAGE_KEYS.NOTES, []); appState.notes = Array.isArray(l) ? l : []; }
-function persistNotes(){ saveLocal(STORAGE_KEYS.NOTES, appState.notes); }
+function persistNotes(){ return saveLocal(STORAGE_KEYS.NOTES, appState.notes); }
 
 /* ---- Tindak lanjut: catatan berkategori "Tindak Lanjut" dapat memilih catatan lain yang ditindaklanjuti ---- */
 // Catatan "Tindak Lanjut" yang menindaklanjuti sebuah catatan (terbaru dulu)
@@ -4548,54 +4563,132 @@ function bindBackupEvents(){
     notifySuccess("Backup berhasil diunduh.");
   });
 
-  $("#btn-backup-import").addEventListener("click", async ()=>{
-    const fileInput = $("#backup-file-input");
-    const file = fileInput.files[0];
-    if (!file) return notifyWarning("Pilih file backup terlebih dahulu.");
-    try {
-      const text = await file.text();
-      const json = JSON.parse(text);
-      const looksValid = json && typeof json === "object" &&
-        ("journals" in json || "attendance" in json || "scores" in json || "students" in json || "profile" in json || "user" in json || "schedule" in json);
-      if (!looksValid) throw new Error("format tidak valid");
+  $("#btn-backup-import").addEventListener("click", importBackupFile);
+}
 
-      const ok = await confirmDialog(
-        "Restore Backup?",
-        "Seluruh data akun Anda (profil, data siswa, jurnal, absensi, nilai, jadwal pelajaran, pengaturan) akan DIGANTIKAN dengan isi file backup ini.",
-        "Ya, Restore"
-      );
-      if (!ok) return;
+/** Merapikan isi backup (format lama maupun baru) sebelum dipakai; tidak membuang data kecuali yang tak bisa dipakai sama sekali. */
+function normalisasiBackup(json){
+  const trim = v=>String(v == null ? "" : v).trim().replace(/\s+/g, " ");
+  const kelasN = k=>{ const raw = trim(k), m = raw.toUpperCase().replace(/[\s.\-_]/g, "").match(/^(VIII|VII|IX|[789])([A-Z0-9]{1,3})$/); return m ? (({VII:"7",VIII:"8",IX:"9"})[m[1]] || m[1]) + m[2] : raw; };
+  const jkN = v=>{ const c = trim(v).charAt(0).toUpperCase(); return c === "L" ? "L" : (c === "P" || c === "W") ? "P" : trim(v); };
+  const tglN = v=>{ const t = trim(v), m = t.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/); return /^\d{4}-\d{2}-\d{2}/.test(t) ? t.slice(0,10) : m ? m[3] + "-" + m[2].padStart(2,"0") + "-" + m[1].padStart(2,"0") : t; };
+  const stN = v=>{ const t = trim(v).toLowerCase(); return /^h/.test(t) ? "H" : /^i/.test(t) ? "I" : /^s/.test(t) ? "S" : /^(a|t)/.test(t) ? "A" : ""; };
+  const arr = x=>Array.isArray(x) ? x : [];
+  const L = { siswa:{ total:0, diperbaiki:0, dilewati:0 }, jurnal:{ total:0, dilewati:0 }, absensi:{ total:0, dilewati:0 }, nilai:{ total:0, dilewati:0 }, catatan:[] };
 
-      showLoading("Memulihkan data...");
-      appState.profile = Object.assign({ namaGuru:"", nip:"", mataPelajaran:"" }, json.profile || json.user || {});
-      appState.students = Array.isArray(json.students) ? json.students : appState.students;
-      appState.journals = Array.isArray(json.journals) ? json.journals.map(normalizeJournal) : [];
-      appState.attendance = Array.isArray(json.attendance) ? json.attendance : [];
-      appState.scores = Array.isArray(json.scores) ? json.scores : [];
-      appState.schedule = Array.isArray(json.schedule) ? json.schedule : [];
-      appState.notes = Array.isArray(json.notes) ? json.notes : [];
-      if (json.settings) appState.settings = Object.assign(appState.settings, json.settings);
-
-      // Satu kali tulis per jenis data (bukan berulang) untuk performa terbaik.
-      persistProfile(); persistStudents(); persistJournals(); persistAttendance(); persistScores(); persistSchedule(); persistNotes(); saveSettings();
-      applyTheme();
-      updateTopbarUser();
-      hideLoading();
-      fileInput.value = "";
-      notifySuccess("Restore berhasil. Semua data dipulihkan dan disinkronkan ke akun.");
-      navigateTo("dashboard");
-    } catch(e){
-      hideLoading();
-      console.error(e);
-      notifyError("File backup tidak valid atau rusak.");
-    }
+  const idSeen = new Set(), nisnSeen = new Set(); let nisnGanda = 0;
+  const students = [];
+  arr(json.students).forEach(s=>{
+    L.siswa.total++;
+    const nama = s && typeof s === "object" ? trim(s.nama || s.name) : "";
+    if (!nama){ L.siswa.dilewati++; return; }
+    let fix = false, nisn = trim(s.nisn);
+    if (/^\d{9}$/.test(nisn)){ nisn = "0" + nisn; fix = true; }              // nol di depan hilang (mis. akibat Excel)
+    if (nisn && nisnSeen.has(nisn)) nisnGanda++; nisnSeen.add(nisn);
+    let id = trim(s.id); if (!id || idSeen.has(id)){ id = uid("std"); fix = true; } idSeen.add(id);
+    if (fix) L.siswa.diperbaiki++;
+    students.push(Object.assign({}, s, { id, nis:trim(s.nis), nisn, nama, jenisKelamin:jkN(s.jenisKelamin || s.jk), kelas:kelasN(s.kelas) }));
   });
+  if (nisnGanda) L.catatan.push(nisnGanda + " siswa memakai NISN yang sama dengan siswa lain (dipertahankan, periksa di Data Siswa).");
+
+  const jSeen = new Set(), journals = [];
+  arr(json.journals).forEach(j=>{
+    L.jurnal.total++;
+    if (!j || typeof j !== "object"){ L.jurnal.dilewati++; return; }
+    const n = normalizeJournal(j); n.kelas = kelasN(n.kelas); n.tanggal = tglN(n.tanggal);
+    if (jSeen.has(n.journalId)){ L.jurnal.dilewati++; return; }
+    jSeen.add(n.journalId); journals.push(n);
+  });
+
+  const attendance = [];
+  arr(json.attendance).forEach(a=>{
+    L.absensi.total++;
+    const st = a ? stN(a.status) : "";
+    if (!st || !trim(a.nama)){ L.absensi.dilewati++; return; }
+    attendance.push(Object.assign({}, a, { status:st, kelas:kelasN(a.kelas), tanggal:tglN(a.tanggal), nama:trim(a.nama) }));
+  });
+  const scores = [];
+  arr(json.scores).forEach(x=>{
+    L.nilai.total++;
+    const v = x ? Number(String(x.nilai).replace(",", ".")) : NaN;
+    if (!isFinite(v) || String(x.nilai).trim() === "" || !trim(x.nama)){ L.nilai.dilewati++; return; }
+    scores.push(Object.assign({}, x, { nilai:v, kelas:kelasN(x.kelas), tanggal:tglN(x.tanggal), nama:trim(x.nama) }));
+  });
+  const orphan = attendance.filter(a=>!jSeen.has(a.journalId)).length + scores.filter(x=>!jSeen.has(x.journalId)).length;
+  if (orphan) L.catatan.push(orphan + " data absensi/nilai tidak punya jurnal pasangannya (tetap dipulihkan).");
+  return {
+    profile: Object.assign({ namaGuru:"", nip:"", mataPelajaran:"" }, json.profile || json.user || {}),
+    students, journals, attendance, scores, schedule: arr(json.schedule), notes: arr(json.notes), settings: json.settings || null, laporan: L
+  };
+}
+
+async function importBackupFile(){
+  const fileInput = $("#backup-file-input"), file = fileInput.files[0];
+  if (!file) return notifyWarning("Pilih file backup terlebih dahulu.");
+  let json;
+  try{ json = JSON.parse(await file.text()); }
+  catch(e){ return notifyError("File bukan JSON yang valid atau terpotong. Pilih file Backup_JHGD_….json yang utuh."); }
+  const looksValid = json && typeof json === "object" && !Array.isArray(json) &&
+    ("journals" in json || "attendance" in json || "scores" in json || "students" in json || "profile" in json || "user" in json || "schedule" in json);
+  if (!looksValid) return notifyError("Format backup tidak dikenali. Gunakan file hasil Export Backup dari Jurnal Harian Guru.");
+
+  const nb = normalisasiBackup(json), L = nb.laporan;
+  const ringkas = `${nb.students.length} siswa, ${nb.journals.length} jurnal, ${nb.attendance.length} absensi, ${nb.scores.length} nilai, ${nb.schedule.length} jadwal`;
+  const ok = await confirmDialog("Restore Backup?",
+    `Seluruh data pada periode "${CLOUD.periodeLabel || CLOUD.periode || "ini"}" akan DIGANTIKAN dengan isi file: ${ringkas}.`, "Ya, Restore");
+  if (!ok) return;
+
+  const lama = { profile:appState.profile, students:appState.students, journals:appState.journals, attendance:appState.attendance, scores:appState.scores, schedule:appState.schedule, notes:appState.notes, settings:appState.settings };
+  showLoading("Memulihkan data ke perangkat...");
+  try{
+    freeSnapshots();
+    appState.profile = nb.profile; appState.students = nb.students; appState.journals = nb.journals; appState.attendance = nb.attendance;
+    appState.scores = nb.scores; appState.schedule = nb.schedule; appState.notes = nb.notes;
+    if (nb.settings) appState.settings = Object.assign({}, appState.settings, nb.settings);
+    const hasil = [persistProfile(), persistStudents(), persistJournals(), persistAttendance(), persistScores(), persistSchedule(), persistNotes(), saveSettings()];
+    if (hasil.some(x=>x === false)){
+      // memori perangkat tidak cukup: kembalikan semuanya (sinkron, sebelum pengiriman ke server dijadwalkan)
+      Object.assign(appState, lama);
+      persistProfile(); persistStudents(); persistJournals(); persistAttendance(); persistScores(); persistSchedule(); persistNotes(); saveSettings();
+      hideLoading();
+      const mb = (JSON.stringify([nb.students, nb.journals, nb.attendance, nb.scores]).length * 2 / 1048576).toFixed(1);
+      return Swal.fire({ icon:"error", title:"Penyimpanan perangkat tidak cukup", html:`File ini membutuhkan ±${mb} MB ruang penyimpanan browser. <b>Tidak ada data yang diubah</b> (data lama aman).<br><br>Coba: tutup tab/aplikasi lain, hapus data situs lain di pengaturan browser, atau lakukan restore dari komputer.` });
+    }
+    applyTheme(); updateTopbarUser();
+  }catch(e){
+    console.error(e); Object.assign(appState, lama); hideLoading();
+    return notifyError("Restore gagal: " + (e && e.message ? e.message : "file tidak dapat diproses") + ". Data lama tidak diubah.");
+  }
+  fileInput.value = "";
+  navigateTo("dashboard");
+
+  // kirim ke server dan tunggu hasilnya (jangan melapor "tersinkron" sebelum benar-benar terkirim)
+  showLoading("Mengirim data ke server...");
+  let terkirim = false;
+  try{
+    for (let i = 0; i < 3 && !terkirim; i++){
+      while (CLOUD.flushing) await new Promise(r=>setTimeout(r, 200));
+      await cloudFlush({ timeout:120000 });
+      terkirim = !CLOUD.dirty.size;
+      if (!terkirim) await new Promise(r=>setTimeout(r, 1500));
+    }
+  }catch(e){ console.error(e); }
+  hideLoading();
+
+  const baris = [
+    `<b>${nb.students.length}</b> siswa, <b>${nb.journals.length}</b> jurnal, <b>${nb.attendance.length}</b> absensi, <b>${nb.scores.length}</b> nilai, <b>${nb.schedule.length}</b> jadwal dipulihkan.`,
+    L.siswa.diperbaiki ? `${L.siswa.diperbaiki} data siswa dirapikan (mis. NISN yang kehilangan angka 0 di depan).` : "",
+    (L.siswa.dilewati + L.jurnal.dilewati + L.absensi.dilewati + L.nilai.dilewati) ? `Dilewati karena tidak lengkap: ${L.siswa.dilewati} siswa, ${L.jurnal.dilewati} jurnal, ${L.absensi.dilewati} absensi, ${L.nilai.dilewati} nilai.` : "",
+    ...L.catatan
+  ].filter(Boolean);
+  Swal.fire({ icon: terkirim ? "success" : "warning", title: terkirim ? "Restore berhasil" : "Dipulihkan di perangkat ini",
+    html: baris.join("<br>") + "<br><br>" + (terkirim ? "Semua data sudah tersimpan di akun online." : "Data belum terkirim ke server. Aplikasi akan mencoba lagi otomatis saat koneksi tersedia; jangan tutup halaman ini dulu.") });
 }
 
 /* =========================================================================
    20. SETTINGS PAGE
    ========================================================================= */
-function saveSettings(){ saveLocal(STORAGE_KEYS.SETTINGS, appState.settings); }
+function saveSettings(){ return saveLocal(STORAGE_KEYS.SETTINGS, appState.settings); }
 function loadSettings(){ appState.settings = Object.assign(appState.settings, loadLocal(STORAGE_KEYS.SETTINGS, {})); }
 
 function renderSettingsPage(){
@@ -4615,6 +4708,7 @@ function renderSettingsPage(){
       <h3 class="card-title" style="margin-bottom:16px;">Batas Ketuntasan</h3>
       <input type="number" id="st-passgrade" min="0" max="100" value="${s.passGrade}" style="padding:10px 14px;border:1.5px solid var(--border);border-radius:9px;width:120px;">
     </div>
+    ${renderBobotCard()}
     <div class="card" style="max-width:560px;">
       <h3 class="card-title" style="margin-bottom:16px;">Jumlah Baris Tabel</h3>
       <select id="st-rows" style="padding:10px 14px;border:1.5px solid var(--border);border-radius:9px;">
@@ -4634,6 +4728,7 @@ function renderSettingsPage(){
 }
 
 function bindSettingsEvents(){
+  bindBobotEvents();
   bindAccountEvents();
   bindInstallCard();
   $("#st-theme").addEventListener("change", e=>{ appState.settings.theme = e.target.value; saveSettings(); applyTheme(); });
@@ -5097,6 +5192,45 @@ function importUlanganKeNilai(hasil){
   });
   try{ localStorage.setItem(ulimpKey(), JSON.stringify([...diimpor])); }catch(e){}
   return hasilAkhir;
+}
+
+/* =========================================================================
+   BOBOT NILAI AKHIR (per kategori) — dipakai di Hasil Belajarku murid.
+   Default sekolah diatur admin; guru boleh memakai bobot sendiri untuk mata pelajarannya.
+   Kategori yang belum punya nilai dilewati dan bobotnya dibagi proporsional.
+   ========================================================================= */
+const BOBOT_KAT = ["Ulangan","Tugas","Keaktifan","Sikap"];
+let BOBOT_DEF = { Ulangan:40, Tugas:30, Keaktifan:15, Sikap:15 };
+function bobotSaatIni(){ const b = appState.settings.bobot; return b && b.aktif ? b : Object.assign({ aktif:false }, BOBOT_DEF); }
+function renderBobotCard(){
+  const b = bobotSaatIni();
+  return `<div class="card" style="max-width:560px;" id="bobot-card">
+      <h3 class="card-title" style="margin-bottom:4px;">Bobot Nilai Akhir</h3>
+      <p class="small-muted" style="margin:0 0 12px;">Nilai akhir tiap mata pelajaran di Hasil Belajarku murid = rata-rata per kategori × bobot. Kategori yang belum punya nilai dilewati (bobotnya dibagi proporsional).</p>
+      <label style="display:flex;gap:8px;align-items:center;margin-bottom:10px;"><input type="checkbox" id="bobot-on" ${b.aktif ? "checked" : ""}> Pakai bobot sendiri (bukan default sekolah)</label>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">
+        ${BOBOT_KAT.map(k=>`<div><label class="small-muted" for="bobot-${k}">${k} (%)</label><input type="number" min="0" max="100" step="1" id="bobot-${k}" value="${b[k]}" ${b.aktif ? "" : "disabled"} style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:9px;"></div>`).join("")}
+      </div>
+      <p class="small-muted" id="bobot-total" style="margin:8px 0 12px;"></p>
+      <button class="btn btn-primary" id="bobot-simpan">Simpan Bobot</button>
+    </div>`;
+}
+function bindBobotEvents(){
+  const hitung = ()=>{ const t = BOBOT_KAT.reduce((a,k)=>a + (Number($("#bobot-"+k).value) || 0), 0); $("#bobot-total").innerHTML = "Total: <b>" + t + "%</b> " + (t === 100 ? "✓" : "(harus 100%)"); return t; };
+  hitung();
+  cloudCall({ action:"bobot_default" }).then(r=>{ if (r && r.ok && r.kategori){ BOBOT_DEF = r.kategori; if (!appState.settings.bobot || !appState.settings.bobot.aktif){ BOBOT_KAT.forEach(k=>{ const el = $("#bobot-"+k); if (el) el.value = BOBOT_DEF[k]; }); hitung(); } } }).catch(()=>{});
+  $("#bobot-on").addEventListener("change", e=>{
+    BOBOT_KAT.forEach(k=>{ const el = $("#bobot-"+k); el.disabled = !e.target.checked; if (!e.target.checked) el.value = BOBOT_DEF[k]; });
+    hitung();
+  });
+  BOBOT_KAT.forEach(k=>$("#bobot-"+k).addEventListener("input", hitung));
+  $("#bobot-simpan").addEventListener("click", ()=>{
+    const on = $("#bobot-on").checked;
+    if (!on){ delete appState.settings.bobot; saveSettings(); return notifySuccess("Memakai bobot default sekolah."); }
+    if (hitung() !== 100) return notifyWarning("Total bobot harus 100%.");
+    const b = { aktif:true }; BOBOT_KAT.forEach(k=>{ b[k] = Math.max(0, Number($("#bobot-"+k).value) || 0); });
+    appState.settings.bobot = b; saveSettings(); notifySuccess("Bobot disimpan. Hasil Belajarku murid akan memakai bobot ini.");
+  });
 }
 </script>
 </body>

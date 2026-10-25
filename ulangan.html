@@ -460,12 +460,10 @@ details.analisis summary{cursor:pointer;font-weight:700;padding:.8rem 0}
         <form class="form" id="form-daftar" autocomplete="off" novalidate hidden>
           <div class="ganti-kode"><span id="t-ulangan"></span><button class="link" id="btn-ganti-ul" type="button">Ganti ulangan</button></div>
           <div id="tutup-box" class="notice" hidden>Ulangan belum dibuka oleh guru.</div>
-          <label for="in-nama">Nama lengkap</label>
-          <input type="text" id="in-nama" maxlength="60" placeholder="Tulis nama lengkapmu" autocapitalize="words" spellcheck="false">
-          <div class="row">
-            <div><label for="in-kelas" id="lb-kelas">Kelas</label><select id="in-kelas"><option value="">Pilih</option></select></div>
-            <div><label for="in-absen">No. absen</label><select id="in-absen"><option value="">Pilih no.</option></select></div>
-          </div>
+          <div id="remedial-box" class="notice" hidden><b>Ulangan remedial.</b> Kamu boleh mengerjakannya lebih dari satu kali; nilai tertinggi akan dirata-ratakan dengan nilai ulangan utama.</div>
+          <label for="in-kelas" id="lb-kelas">Kelas</label><select id="in-kelas"><option value="">Pilih kelas</option></select>
+          <label for="in-siswa">Nama</label><select id="in-siswa" disabled><option value="">Pilih kelas lebih dulu</option></select>
+          <div id="nisn-box" class="petunjuk" hidden style="margin:.2rem 0 .6rem">NISN: <b id="nisn-teks"></b> <span>(terisi otomatis dari data siswa sekolah)</span></div>
           <label class="cek" for="in-setuju"><input type="checkbox" id="in-setuju"><span>Saya sudah membaca aturan dan akan mengerjakan sendiri dengan jujur.</span></label>
           <button class="btn primary" id="btn-mulai" type="submit" disabled>Mulai ulangan</button>
           <p class="err" id="err-daftar" role="alert"></p>
@@ -663,6 +661,25 @@ details.analisis summary{cursor:pointer;font-weight:700;padding:.8rem 0}
             </div></section>
             <div class="aksi-bar"><button class="btn primary" id="s-simpan" type="button">Simpan pengaturan</button><span id="s-msg" style="font-weight:600"></span></div>
           </div>
+          <div class="card" id="rem-card" style="margin-top:1rem">
+            <section class="grup"><h3>Remedial</h3>
+              <div id="rem-kosong" hidden>
+                <p class="petunjuk">Buat ulangan khusus remedial untuk siswa yang belum tuntas. Siswa boleh mengerjakannya berulang kali; <b>nilai tertinggi</b> dirata-ratakan dengan nilai ulangan ini. Remedial adalah ulangan tersendiri dengan kode dan soalnya sendiri.</p>
+                <label class="tog"><input type="checkbox" id="rem-salin" checked> Salin soal dari ulangan ini (bisa diedit kemudian)</label>
+                <div class="aksi-bar"><button class="btn primary" id="btn-rem-buat" type="button">Buat pengaturan remedial</button><span id="rem-msg" style="font-weight:600"></span></div>
+              </div>
+              <div id="rem-ada" hidden>
+                <p class="petunjuk">Kode remedial: <b class="num" id="rem-kode"></b> · <span id="rem-status"></span> · <span id="rem-bank"></span></p>
+                <div class="field"><label for="rem-link">Tautan untuk dibagikan ke siswa</label><input type="text" id="rem-link" readonly></div>
+                <div class="aksi-bar"><button class="btn primary" id="btn-rem-buka" type="button">Buka pengaturan remedial</button><button class="btn" id="btn-rem-salin" type="button">Salin tautan remedial</button></div>
+                <p class="petunjuk">Di pengaturan remedial: tambahkan/edit soal, lalu aktifkan “Ulangan dibuka untuk siswa”. Tombol “Kerjakan Test Remedial” muncul di Hasil Belajarku siswa yang belum tuntas.</p>
+              </div>
+              <div id="rem-induk" hidden>
+                <p class="petunjuk">Ini <b>ulangan remedial</b> dari “<span id="rem-induk-judul"></span>”. Nilai tertinggi tiap siswa dirata-ratakan dengan nilai ulangan utama; siswa dapat mengulang sampai 10 kali.</p>
+                <div class="aksi-bar"><button class="btn" id="btn-rem-induk" type="button">Buka ulangan utama</button></div>
+              </div>
+            </section>
+          </div>
           <div class="zona-bahaya">
             <h3>Zona berbahaya</h3>
             <p>Tindakan ini tidak bisa dibatalkan.</p>
@@ -816,6 +833,9 @@ const PESAN = {
   KELAS_TIDAK_VALID: 'Pilih kelas dari daftar.',
   ABSEN_TIDAK_VALID: 'Pilih nomor absen dari daftar.',
   KODE_TIDAK_ADA: 'Kode ulangan tidak ditemukan. Periksa kembali kodenya.',
+  SISWA_TIDAK_ADA: 'Namamu tidak ditemukan pada kelas ini. Pilih ulang kelas dan namamu, atau hubungi gurumu.',
+  BELUM_UJIAN_UTAMA: 'Remedial hanya untuk siswa yang sudah mengerjakan ulangan utama.',
+  BATAS_PERCOBAAN: 'Batas percobaan remedial sudah tercapai (maksimal 10 kali).',
   KODE_SALAH: 'Kode ulangan salah untuk ulangan yang kamu pilih. Minta kode yang benar dari gurumu.',
   TERLALU_BANYAK_SALAH: 'Terlalu banyak kode yang salah. Coba lagi dalam 5 menit.',
   KODE_TIDAK_VALID: 'Kode harus 4–10 karakter huruf atau angka (tanpa spasi).',
@@ -912,14 +932,14 @@ const NAMA_RE = /^[\p{L}\p{N}][\p{L}\p{M}\p{N}.' -]{2,59}$/u;
 /* ---------- kode ulangan & pendaftaran ---------- */
 $('form-kode').addEventListener('submit', e => { e.preventDefault(); const k = $('in-kode').value.trim().toUpperCase(); if (k) muatKodeLangsung(k); });
 $('btn-ganti-ul').addEventListener('click', () => { S.cfg = null; history.replaceState(null, '', location.pathname + location.hash); tampilPilih(); });
-['in-nama', 'in-kelas', 'in-absen', 'in-setuju'].forEach(id => $(id).addEventListener('input', cekForm));
+['in-kelas', 'in-siswa', 'in-setuju'].forEach(id => $(id).addEventListener('input', cekForm));
 $('form-daftar').addEventListener('submit', e => { e.preventDefault(); mulaiBaru(); });
 $('btn-lanjut').addEventListener('click', lanjutkanSesi);
 
 function cekForm() {
-  $('btn-mulai').disabled = !(S.akunOk !== false && NAMA_RE.test($('in-nama').value.trim()) && $('in-kelas').value && $('in-absen').value && $('in-setuju').checked && S.cfg && S.cfg.aktif);
+  $('btn-mulai').disabled = !($('in-kelas').value && $('in-siswa').value && $('in-setuju').checked && S.cfg && S.cfg.aktif);
 }
-function langkah(n) { $('seg2').classList.toggle('on', n === 2); $('langkah-teks').textContent = n === 2 ? 'Langkah 2 dari 2 · Periksa data diri' : 'Langkah 1 dari 2 · Masukkan kode ulangan'; }
+function langkah(n) { $('seg2').classList.toggle('on', n === 2); $('langkah-teks').textContent = n === 2 ? 'Langkah 2 dari 2 · Pilih kelas dan namamu' : 'Langkah 1 dari 2 · Masukkan kode ulangan'; }
 function tampilPilih() {
   langkah(1); $('box-pilih').hidden = false; $('form-daftar').hidden = true; $('info-ujian').hidden = true; $('err-kode').textContent = '';
   $('judul-ujian').textContent = 'Ulangan Online'; $('sub-ujian').textContent = 'Masukkan kode ulangan dari gurumu untuk memulai.'; document.title = 'Ulangan Online'; setTimeout(() => $('in-kode').focus(), 50);
@@ -930,24 +950,11 @@ function tampilForm(c) {
   $('sub-ujian').textContent = `${c.mapel} · Kelas ${c.tingkat}`;
   $('f-soal').textContent = c.jumlah; $('f-durasi').textContent = c.durasi; $('a-maks').textContent = c.maks; $('info-ujian').hidden = false;
   $('t-ulangan').textContent = `${c.mapel} · Kelas ${c.tingkat}`;
-  $('lb-kelas').textContent = `Kelas ${c.tingkat}`;
-  $('in-kelas').innerHTML = '<option value="">Pilih</option>' + c.kelas.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join('');
-  $('in-absen').innerHTML = '<option value="">Pilih no.</option>' + Array.from({ length: c.maxAbsen }, (_, i) => `<option value="${pad2(i + 1)}">${pad2(i + 1)}</option>`).join('');
+  $('lb-kelas').textContent = 'Kelas'; $('remedial-box').hidden = !c.remedial;
+  $('in-kelas').innerHTML = '<option value="">Pilih kelas</option>' + c.kelas.map(k => `<option value="${esc(c.tingkat + k)}">${esc(c.tingkat + k)}</option>`).join('');
+  $('in-siswa').innerHTML = '<option value="">Pilih kelas lebih dulu</option>'; $('in-siswa').disabled = true; $('nisn-box').hidden = true; S.siswa = {};
   $('tutup-box').hidden = !!c.aktif; $('box-pilih').hidden = true; $('form-daftar').hidden = false; $('err-daftar').textContent = '';
   cekForm(); window.scrollTo(0, 0);
-}
-/* Identitas murid diambil dari akunnya (server juga memakai data akun, bukan isian ini). */
-function isiDataAkun(c) {
-  const u = SES.user, tk = String(u.kelas || '').toUpperCase();
-  $('in-nama').value = u.nama; $('in-nama').readOnly = true;
-  const huruf = tk.indexOf(c.tingkat) === 0 ? tk.slice(c.tingkat.length) : '';
-  $('in-kelas').value = huruf; $('in-kelas').disabled = true;
-  $('in-absen').value = pad2(u.absen); $('in-absen').disabled = true;
-  let pesan = '';
-  if (tk.indexOf(c.tingkat) !== 0) pesan = 'Ulangan ini untuk kelas ' + c.tingkat + ', sedangkan akunmu terdaftar di kelas ' + (tk || '-') + '. Hubungi admin bila data kelasmu keliru.';
-  else if (c.kelas.indexOf(huruf) < 0) pesan = 'Kelas ' + tk + ' tidak termasuk dalam daftar kelas ulangan ini. Hubungi gurumu.';
-  else if (Number(u.absen) > c.maxAbsen) pesan = 'Nomor absenmu melebihi batas ulangan ini. Hubungi gurumu.';
-  $('err-daftar').textContent = pesan; S.akunOk = !pesan;
 }
 async function muatKodeLangsung(kode) {
   $('err-kode').textContent = '';
@@ -963,15 +970,36 @@ async function muatKodeLangsung(kode) {
 function initDaftar() {
   const t = tersimpan();
   $('lanjut-box').hidden = !t;
-  if (t) $('lanjut-info').textContent = `${t.nama} · Kelas ${t.kelas} · No. ${t.absen}`;
+  if (t) $('lanjut-info').textContent = `${t.nama} · Kelas ${t.kelas}${t.absen ? ' · No. ' + t.absen : ''}`;
   const kode = (new URLSearchParams(location.search).get('u') || '').trim().toUpperCase();
   if (kode) { $('in-kode').value = kode; if (!S.cfg || S.cfg.kode !== kode) muatKodeLangsung(kode); return; }
   if (S.cfg) return tampilForm(S.cfg);
   tampilPilih();
 }
 
+/* Langkah 2: pilih kelas -> daftar nama diambil dari Data Siswa sekolah; NISN terisi otomatis oleh server. */
+async function muatSiswaKelas() {
+  const kelas = $('in-kelas').value, sel = $('in-siswa'); S.siswa = {}; $('nisn-box').hidden = true; $('err-daftar').textContent = '';
+  if (!kelas) { sel.innerHTML = '<option value="">Pilih kelas lebih dulu</option>'; sel.disabled = true; return cekForm(); }
+  sel.disabled = true; sel.innerHTML = '<option value="">Memuat daftar nama…</option>'; cekForm();
+  let r = null;
+  try { r = await api('ul_siswa', { kode: S.cfg.kode, kelas }, { diam: true }); }
+  catch (e) { sel.innerHTML = '<option value="">Gagal memuat</option>'; $('err-daftar').textContent = 'Tidak dapat terhubung ke server. Pilih kelas lagi untuk mencoba ulang.'; return; }
+  if ($('in-kelas').value !== kelas) return;   // kelas sudah diganti saat menunggu
+  if (!r.ok) { sel.innerHTML = '<option value="">Gagal memuat</option>'; $('err-daftar').textContent = pesanGalat(r.error); return; }
+  if (!r.siswa.length) { sel.innerHTML = '<option value="">Belum ada siswa pada kelas ini</option>'; $('err-daftar').textContent = 'Data siswa kelas ini belum ada di sekolah. Hubungi gurumu atau admin.'; return; }
+  r.siswa.forEach(x => { S.siswa[x.sid] = x; });
+  sel.innerHTML = '<option value="">Pilih namamu</option>' + r.siswa.map(x => `<option value="${esc(x.sid)}">${x.absen ? esc(x.absen) + ' · ' : ''}${esc(x.nama)}</option>`).join('');
+  sel.disabled = false; cekForm();
+}
+$('in-kelas').addEventListener('change', muatSiswaKelas);
+$('in-siswa').addEventListener('change', () => {
+  const x = S.siswa && S.siswa[$('in-siswa').value];
+  $('nisn-box').hidden = !x; if (x) $('nisn-teks').textContent = x.nisn; cekForm();
+});
 async function mulaiBaru() {
-  await mulaiSesi({ kode: S.cfg.kode, nama: $('in-nama').value.trim().replace(/\s+/g, ' '), kelas: S.cfg.tingkat + $('in-kelas').value, absen: $('in-absen').value }, $('err-daftar'), $('btn-mulai'));
+  const x = S.siswa[$('in-siswa').value]; if (!x) return;
+  await mulaiSesi({ kode: S.cfg.kode, kelas: $('in-kelas').value, sid: x.sid, nama: x.nama, absen: x.absen }, $('err-daftar'), $('btn-mulai'));
 }
 async function lanjutkanSesi() { const t = tersimpan(); if (t) await mulaiSesi(t, $('err-daftar'), $('btn-lanjut')); }
 
@@ -1013,13 +1041,13 @@ async function mulaiSesi(d, errEl, btn) {
 function masukUjian(r, d) {
   let lokal = {}; try { lokal = JSON.parse(localStorage.getItem('ulangan_jawaban_' + r.token)) || {}; } catch (e) {}
   Object.assign(S, {
-    active: true, submitting: false, token: r.token, kode: d.kode, nama: d.nama, kelas: d.kelas, absen: pad2(d.absen), soal: r.soal,
+    active: true, submitting: false, token: r.token, kode: d.kode, nama: d.nama, kelas: d.kelas, absen: d.absen ? pad2(d.absen) : '', soal: r.soal,
     jawaban: Object.assign({}, r.jawaban, lokal), idx: 0, mulai: r.mulai, durMs: r.durasi * 60000, offset: r.serverNow - Date.now(),
     pel: r.pelanggaran || 0, maxPel: r.maks, log: [], lastViol: 0, syncing: false, again: false, rev: 1, synced: 0, habisT: null
   });
   const belum = S.soal.findIndex(q => !S.jawaban[q.no]); S.idx = belum < 0 ? 0 : belum;
   document.body.classList.add('exam-mode');
-  $('x-nama').textContent = S.nama; $('x-kelas').textContent = `Kelas ${S.kelas} · No. absen ${S.absen}`;
+  $('x-nama').textContent = S.nama; $('x-kelas').textContent = `Kelas ${S.kelas}${S.absen ? ' · No. absen ' + S.absen : ''}`;
   $('x-avatar').textContent = (S.nama.trim()[0] || '?').toUpperCase(); $('x-judul').textContent = r.judul || '';
   bangunWatermark(); show('view-ujian');
   bangunPorts(); renderSoal(); renderHeader();
@@ -1179,7 +1207,7 @@ function selesaiUI(r, alasan) {
     mendeteksi, menghalangi, menggelapkan layar, dan mencatat ke guru)
    ===================================================================== */
 function bangunWatermark() {
-  const t = `${S.nama} · ${S.kelas} · ${S.absen}`;
+  const t = [S.nama, S.kelas, S.absen].filter(Boolean).join(' · ');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="360" height="200"><text x="20" y="110" font-family="sans-serif" font-size="20" font-weight="700" fill="#12263A" transform="rotate(-24 180 100)">${esc(t)}</text></svg>`;
   const w = $('watermark'); w.style.backgroundImage = `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}")`; w.hidden = false;
 }
@@ -1286,7 +1314,7 @@ function gantiMain(m) {
 function renderList(r) {
   if (!r.ulangan.length) { $('ul-grid').innerHTML = '<p class="kosong">Belum ada ulangan. Klik “Buat ulangan baru” untuk memulai.</p>'; return; }
   $('ul-grid').innerHTML = r.ulangan.map(u => `<div class="ul-card${u.aktif ? '' : ' tutup'}">
-      <div style="display:flex;justify-content:space-between;gap:.5rem;align-items:start"><span class="kode">${esc(u.kode)}</span><span class="badge ${u.aktif ? 'ok' : 'mute'}">${u.aktif ? 'Dibuka' : 'Ditutup'}</span></div>
+      <div style="display:flex;justify-content:space-between;gap:.5rem;align-items:start"><span class="kode">${esc(u.kode)}</span><span>${u.induk ? '<span class="badge">Remedial</span> ' : ''}<span class="badge ${u.aktif ? 'ok' : 'mute'}">${u.aktif ? 'Dibuka' : 'Ditutup'}</span></span></div>
       <h3>${esc(u.judul)}</h3>
       <div class="meta">${esc(u.mapel || '—')} · Kelas ${esc(u.tingkat || '—')}</div>
       <div class="meta num">${u.soal} soal bank · ${u.jumlah ? u.jumlah + ' soal/siswa' : 'semua soal'} · ${u.durasi} menit<br>${u.jalan} mengerjakan · ${u.selesai} selesai${isAdmin() ? '<br>Pemilik: ' + esc(u.pemilik) : ''}</div>
@@ -1353,7 +1381,7 @@ async function bukaUlangan(kode, sub) {
   delete A.ulCache[kode];                                                              // data soal bisa berubah: jangan dipakai ulang lama
   if (A.kode !== kode) return;
   if (!r.ok) { info('Gagal membuka ulangan', pesanGalat(r.error)); return muatList(); }
-  A.ul = r.ul; A.soal = r.soal; tampilJudul();
+  A.ul = r.ul; A.soal = r.soal; A.rem = r.remedial || null; A.indukJudul = r.indukJudul || ''; tampilJudul();
   isiPengaturan();
   gantiSub(!r.soal.length ? 'soal' : A.sub);
 }
@@ -1408,7 +1436,7 @@ function renderPantau() {
         <td class="num">${p.status === 'SELESAI' ? '–' : mmss(Math.max(0, p.sisa - (Date.now() - A.monAt)))}</td>
         <td>${p.pelanggaran ? `<span class="badge bad" title="${esc(p.log)}">${p.pelanggaran}x</span>` : '<span class="badge mute">0</span>'}</td>
         <td>${p.status === 'SELESAI' ? '–' : akt}</td>
-        <td style="white-space:nowrap">${p.status === 'BERLANGSUNG' ? `<button class="btn small" data-lepas="1" data-kelas="${esc(p.kelas)}" data-absen="${esc(p.absen)}" data-nama="${esc(p.nama)}" title="${p.lepas ? 'Perangkat sudah dilepas' : 'Izinkan siswa pindah ke perangkat lain'}">${p.lepas ? 'Terlepas' : 'Lepas perangkat'}</button> ` : ''}<button class="btn small danger" data-reset="1" data-kelas="${esc(p.kelas)}" data-absen="${esc(p.absen)}" data-nama="${esc(p.nama)}">Reset</button></td></tr>`;
+        <td style="white-space:nowrap">${p.status === 'BERLANGSUNG' ? `<button class="btn small" data-lepas="1" data-kunci="${esc(p.kunci)}" data-kelas="${esc(p.kelas)}" data-absen="${esc(p.absen)}" data-nama="${esc(p.nama)}" title="${p.lepas ? 'Perangkat sudah dilepas' : 'Izinkan siswa pindah ke perangkat lain'}">${p.lepas ? 'Terlepas' : 'Lepas perangkat'}</button> ` : ''}<button class="btn small danger" data-reset="1" data-kunci="${esc(p.kunci)}" data-kelas="${esc(p.kelas)}" data-absen="${esc(p.absen)}" data-nama="${esc(p.nama)}">Reset</button></td></tr>`;
     }).join('') + '</tbody>';
 }
 $('p-tabel').addEventListener('click', async e => {
@@ -1416,14 +1444,14 @@ $('p-tabel').addEventListener('click', async e => {
   if (b) resetSiswa(b.dataset, muatPantau);
   if (l) {
     const d = l.dataset; l.disabled = true;
-    const r = await adm('ul_lepas_perangkat', { kode: A.kode, kelas: d.kelas, absen: d.absen });
+    const r = await adm('ul_lepas_perangkat', { kode: A.kode, kunci: d.kunci, kelas: d.kelas, absen: d.absen });
     if (r.ok) muatPantau(); else { l.disabled = false; info('Gagal', pesanGalat(r.error)); }
   }
 });
 function resetSiswa(d, sesudah) {
   modal(`<h2>Reset ${esc(d.nama)}?</h2><p>Sesi dan hasil siswa ini dihapus, sehingga ia dapat mengerjakan ulang dari awal.</p>
     <div class="aksi"><button class="btn" data-x="batal">Batal</button><button class="btn danger" data-x="ya">Reset siswa</button></div>`,
-    async x => { if (x === 'ya') { const r = await adm('ul_reset_siswa', { kode: A.kode, kelas: d.kelas, absen: d.absen }); if (r.ok) sesudah(); else info('Gagal', pesanGalat(r.error)); } });
+    async x => { if (x === 'ya') { const r = await adm('ul_reset_siswa', { kode: A.kode, kunci: d.kunci, kelas: d.kelas, absen: d.absen }); if (r.ok) sesudah(); else info('Gagal', pesanGalat(r.error)); } });
 }
 
 /* ---------- hasil ---------- */
@@ -1456,7 +1484,7 @@ function renderHasil() {
       <td class="r num">${r.benar}</td><td class="r num">${r.salah}</td><td class="r num">${r.kosong}</td><td class="r num"><b>${fmtNilai(r.nilai)}</b></td>
       <td class="r num">${fmtNilai(r.durasi)}</td><td class="r num">${r.pelanggaran ? `<span class="badge bad">${r.pelanggaran}x</span>` : '0'}</td>
       <td><span class="badge ${r.nilai >= s.kkm ? 'ok' : 'warn'}">${r.nilai >= s.kkm ? 'Tuntas' : 'Belum tuntas'}</span>${/WAKTU|PELANGGARAN/.test(r.alasan) ? ` <span class="badge mute">${esc(r.alasan)}</span>` : ''}</td>
-      <td style="white-space:nowrap"><button class="btn small" data-detail="${i}">Detail</button> <button class="btn small danger" data-reset="1" data-kelas="${esc(r.kelas)}" data-absen="${esc(r.absen)}" data-nama="${esc(r.nama)}">Reset</button></td></tr>`).join('') + '</tbody>';
+      <td style="white-space:nowrap"><button class="btn small" data-detail="${i}">Detail</button> <button class="btn small danger" data-reset="1" data-kunci="${esc(r.kunci)}" data-kelas="${esc(r.kelas)}" data-absen="${esc(r.absen)}" data-nama="${esc(r.nama)}">Reset</button></td></tr>`).join('') + '</tbody>';
   const L = analisisLengkap(rows), st = L.stat, f2 = x => (x === null ? '–' : (Math.round(x * 100) / 100).toString().replace('.', ','));
   $('h-analisis-ringkas').innerHTML = `Peserta <b>${st.n}</b> · Rata-rata <b>${f2(st.rata)}</b> · Median <b>${f2(st.median)}</b> · Simpangan baku <b>${f2(st.sd)}</b> · Reliabilitas KR-20 <b>${f2(st.kr20)}</b> (${st.tafsirKR})` +
     (st.g ? ` · Daya pembeda memakai kelompok atas/bawah masing-masing ${st.g} siswa (27%).` : ' · Daya pembeda baru dihitung bila peserta ≥ 10.');
@@ -1680,8 +1708,26 @@ function isiPengaturan() {
   $('s-mapel').value = u.mapel; $('s-tingkat').value = u.tingkat; $('s-kode').value = u.kode;
   $('s-judul-in').value = u.judul; $('s-durasi').value = u.durasi; $('s-jumlah').value = u.jumlah; $('s-maks').value = u.maks; $('s-kkm').value = u.kkm;
   $('s-kelas').value = u.kelas.join(', '); $('s-absen').value = u.maxAbsen; $('s-aktif').checked = !!u.aktif; $('s-tampil').checked = !!u.tampil_nilai;
-  $('s-acaklevel').checked = !!u.acakLevel; $('s-urutlevel').checked = !!u.urutLevel; renderKomposisi();
+  $('s-acaklevel').checked = !!u.acakLevel; $('s-urutlevel').checked = !!u.urutLevel; renderKomposisi(); isiRemedial();
 }
+/* ---------- remedial ---------- */
+function isiRemedial() {
+  const u = A.ul, r = A.rem; $('rem-msg').textContent = '';
+  $('rem-kosong').hidden = !!u.induk || !!r; $('rem-ada').hidden = !!u.induk || !r; $('rem-induk').hidden = !u.induk;
+  if (u.induk) $('rem-induk-judul').textContent = A.indukJudul || u.induk;
+  if (r) { $('rem-kode').textContent = r.kode; $('rem-status').textContent = r.aktif ? 'Dibuka untuk siswa' : 'Belum dibuka'; $('rem-bank').textContent = r.bank + ' soal'; $('rem-link').value = linkSiswa(r.kode); }
+}
+$('btn-rem-buat').addEventListener('click', async () => {
+  const b = $('btn-rem-buat'); b.disabled = true; $('rem-msg').textContent = 'Membuat…';
+  const r = await adm('ul_remedial_buat', { kode: A.kode, salinSoal: $('rem-salin').checked });
+  b.disabled = false;
+  if (!r.ok) { $('rem-msg').style.color = 'var(--bad,#dc2626)'; $('rem-msg').textContent = pesanGalat(r.error); return; }
+  A.listCache = null; await bukaUlangan(A.kode, 'atur');
+  $('rem-msg').style.color = 'var(--ok,#16a34a)'; $('rem-msg').textContent = 'Remedial dibuat' + (r.disalin ? ` (${r.disalin} soal disalin)` : '') + '. Buka pengaturannya untuk menyiapkan soal dan membukanya.';
+});
+$('btn-rem-buka').addEventListener('click', () => { if (A.rem) bukaUlangan(A.rem.kode, 'atur'); });
+$('btn-rem-salin').addEventListener('click', e => { if (A.rem) salin(linkSiswa(A.rem.kode), e.target); });
+$('btn-rem-induk').addEventListener('click', () => { if (A.ul && A.ul.induk) bukaUlangan(A.ul.induk, 'atur'); });
 /* jatah per level: sama persis dengan perhitungan di server (metode sisa terbesar) */
 function kuotaLevel(ukuran, n) {
   const total = ukuran.reduce((a, b) => a + b, 0), q = ukuran.map(u => Math.floor(n * u / total));
