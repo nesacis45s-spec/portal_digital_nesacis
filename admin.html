@@ -355,11 +355,25 @@ async function restore(){
 async function vSistem(){
   const r=await call('ad_ringkasan');if(!r.ok)return $('view').innerHTML=`<div class="msg err">${esc(pesan(r))}</div>`;
   $('view').innerHTML=`<h1>Sistem</h1>
+  <div class="card"><h2>Bobot nilai akhir &amp; ketuntasan</h2>
+   <p class="mut">Dipakai di Hasil Belajarku murid. Guru dapat memakai bobot kategori sendiri di pengaturan Jurnal. Kategori yang belum punya nilai dilewati dan bobotnya dibagi proporsional.</p>
+   <div class="fgrid" id="bw"></div><p class="mut" id="bw-total" style="margin:8px 0"></p>
+   <div class="fgrid"><div><label>Bobot Nilai dari Guru (%)</label><input id="bw-guru" type="number" min="0" max="100"></div><div><label>Bobot Ulangan Online (%)</label><input id="bw-online" type="number" disabled></div><div><label>Batas ketuntasan (tidak ditampilkan ke murid)</label><input id="bw-kkm" type="number" min="1" max="100"></div></div>
+   <div class="row" style="margin-top:12px"><button class="btn" id="bw-simpan">Simpan bobot</button></div><div id="bw-msg"></div></div>
   <div class="card"><h2>Ubah password saya</h2><div class="row"><input id="p1" type="password" placeholder="Password lama" class="grow"><input id="p2" type="password" placeholder="Password baru (min. 6)" class="grow"><button class="btn" id="pw">Simpan</button></div><div id="pm"></div></div>
   <div class="card"><h2>Rekap Hasil Belajar murid</h2><p class="mut">Rekap diperbarui otomatis setiap guru menyimpan, sehingga halaman Hasil Belajarku cepat. Bangun ulang rekap bila Anda baru memulihkan backup lama atau memindahkan data dari aplikasi sebelumnya.</p>
    <div class="row"><select id="rp" class="grow"></select><button class="btn" id="rb">Bangun ulang rekap periode ini</button></div><div id="rm"></div></div>
   <div class="card"><h2>Kosongkan data ulangan</h2><p class="mut">Menghapus semua peserta &amp; hasil ulangan (atau juga semua ulangan &amp; soal). Tidak bisa dibatalkan — lakukan backup dulu.</p>
    <div class="row"><button class="btn bad" id="k1">Kosongkan peserta &amp; hasil</button><button class="btn bad" id="k2">Kosongkan semua ulangan &amp; soal</button></div></div>`;
+  const bwr=await call('ad_bobot_info');
+  if(bwr.ok){const K=['Ulangan','Tugas','Keaktifan','Sikap'];
+    $('bw').innerHTML=K.map(k=>`<div><label>${k} (%)</label><input type="number" min="0" max="100" data-bw="${k}" value="${bwr.kategori[k]}"></div>`).join('');
+    $('bw-guru').value=bwr.guru;$('bw-online').value=100-bwr.guru;$('bw-kkm').value=bwr.kkm;
+    const tot=()=>{const t=K.reduce((s,k)=>s+(Number(document.querySelector(`[data-bw=${k}]`).value)||0),0);$('bw-total').innerHTML='Total bobot kategori: <b>'+t+'%</b> '+(t===100?'✓':'(harus 100%)');$('bw-online').value=100-(Number($('bw-guru').value)||0);return t};
+    tot();$('bw').oninput=tot;$('bw-guru').oninput=tot;
+    $('bw-simpan').onclick=async()=>{const kat={};K.forEach(k=>kat[k]=Number(document.querySelector(`[data-bw=${k}]`).value)||0);
+      const x=await call('ad_bobot_simpan',{kategori:kat,guru:Number($('bw-guru').value),kkm:Number($('bw-kkm').value)});
+      $('bw-msg').innerHTML=x.ok?'<div class="msg ok">Bobot disimpan. Hasil Belajarku memakai nilai ini (cache hingga 30 detik).</div>':`<div class="msg err">${esc(pesan(x))}</div>`}}
   $('rp').innerHTML=r.periodes.map(p=>`<option value="${esc(p.id)}" ${p.aktif?'selected':''}>${esc(p.label)}</option>`).join('');
   $('rb').onclick=async()=>{const b=$('rb');b.disabled=true;const x=await call('ad_rekap_bangun',{periode:$('rp').value},{timeout:240000});b.disabled=false;$('rm').innerHTML=x.ok?`<div class="msg ok">Selesai: ${x.guru} guru, ${x.murid} murid.</div>`:`<div class="msg err">${esc(pesan(x))}</div>`};
   $('pw').onclick=async()=>{const x=await call('changePassword',{oldPassword:$('p1').value,newPassword:$('p2').value});$('pm').innerHTML=x.ok?'<div class="msg ok">Password diganti.</div>':`<div class="msg err">${esc(pesan(x))}</div>`;if(x.ok){$('p1').value=$('p2').value=''}};
