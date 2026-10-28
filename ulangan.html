@@ -273,6 +273,12 @@ body.blocked #view-ujian .exam-bar,body.blocked #view-ujian .exam-wrap{visibilit
 .sec-h h2{font-size:1.4rem;font-weight:800;letter-spacing:-.02em}
 
 .ul-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:1rem}
+.sw{display:inline-flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.8rem;font-weight:700}
+.sw input{position:absolute;opacity:0;width:0;height:0}
+.sw i{width:38px;height:22px;border-radius:99px;background:#9aa8b6;position:relative;transition:.2s;flex:none}
+.sw i::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.2s}
+.sw input:checked+i{background:#16a34a}.sw input:checked+i::after{left:19px}
+.sw input:focus-visible+i{outline:2px solid #2563eb;outline-offset:2px}.sw input:disabled+i{opacity:.55}
 .ul-card{position:relative;background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:1.15rem 1.2rem 1.1rem 1.4rem;display:flex;flex-direction:column;gap:.45rem;box-shadow:var(--sh-sm);transition:box-shadow .15s,transform .15s,border-color .15s;overflow:hidden}
 .ul-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:linear-gradient(180deg,#2E9E4F,#7DD3A0)}
 .ul-card.tutup::before{background:var(--line-2)}
@@ -1314,7 +1320,7 @@ function gantiMain(m) {
 function renderList(r) {
   if (!r.ulangan.length) { $('ul-grid').innerHTML = '<p class="kosong">Belum ada ulangan. Klik “Buat ulangan baru” untuk memulai.</p>'; return; }
   $('ul-grid').innerHTML = r.ulangan.map(u => `<div class="ul-card${u.aktif ? '' : ' tutup'}">
-      <div style="display:flex;justify-content:space-between;gap:.5rem;align-items:start"><span class="kode">${esc(u.kode)}</span><span>${u.induk ? '<span class="badge">Remedial</span> ' : ''}<span class="badge ${u.aktif ? 'ok' : 'mute'}">${u.aktif ? 'Dibuka' : 'Ditutup'}</span></span></div>
+      <div style="display:flex;justify-content:space-between;gap:.5rem;align-items:start"><span class="kode">${esc(u.kode)}</span><span>${u.induk ? '<span class="badge">Remedial</span> ' : ''}<label class="sw" title="Buka / tutup ulangan untuk siswa"><input type="checkbox" data-aktif="${esc(u.kode)}" ${u.aktif ? 'checked' : ''}><i></i><b>${u.aktif ? 'Dibuka' : 'Ditutup'}</b></label></span></div>
       <h3>${esc(u.judul)}</h3>
       <div class="meta">${esc(u.mapel || '—')} · Kelas ${esc(u.tingkat || '—')}</div>
       <div class="meta num">${u.soal} soal bank · ${u.jumlah ? u.jumlah + ' soal/siswa' : 'semua soal'} · ${u.durasi} menit<br>${u.jalan} mengerjakan · ${u.selesai} selesai${isAdmin() ? '<br>Pemilik: ' + esc(u.pemilik) : ''}</div>
@@ -1333,6 +1339,17 @@ async function muatList() {
     A.listCache = r;
   } catch (e) { if (!ada) $('ul-grid').innerHTML = '<p class="kosong">Tidak dapat terhubung ke server.</p>'; }
 }
+/* Saklar buka/tutup pada kartu: langsung menyimpan tanpa membuka pengaturan. */
+$('ul-grid').addEventListener('change', async e => {
+  const cb = e.target.closest('[data-aktif]'); if (!cb) return;
+  const aktif = cb.checked, card = cb.closest('.ul-card'), lb = cb.parentNode.querySelector('b');
+  cb.disabled = true; lb.textContent = '…';
+  let r = null; try { r = await adm('ul_aktif', { kode: cb.dataset.aktif, aktif }); } catch (x) { r = { ok: false, error: 'SERVER_SIBUK' }; }
+  cb.disabled = false;
+  if (!r || !r.ok) { cb.checked = !aktif; lb.textContent = cb.checked ? 'Dibuka' : 'Ditutup'; return info('Gagal mengubah status', pesanGalat(r && r.error)); }
+  lb.textContent = aktif ? 'Dibuka' : 'Ditutup'; card.classList.toggle('tutup', !aktif);
+  if (A.listCache) { const u = A.listCache.ulangan.find(x => x.kode === cb.dataset.aktif); if (u) u.aktif = aktif; }
+});
 function prefetchUl(kode) {                                    // dipanggil saat kursor/jari menyentuh tombol Lihat
   A.ulCache = A.ulCache || {};
   const c = A.ulCache[kode]; if (c && Date.now() - c.t < 20000) return;

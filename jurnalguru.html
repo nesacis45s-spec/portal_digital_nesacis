@@ -1383,7 +1383,6 @@ const NAV_ITEMS = [
   { page:"pengaturan", label:"Pengaturan", icon:"settings" },
   { page:"bantuan", label:"Cara Menggunakan", icon:"help" },
   { href:"ulangan.html", label:"Ulangan Online", icon:"notes" },
-  { action:"impUlangan", label:"Tarik Nilai Ulangan", icon:"chart" },
   { href:"panduan.html#guru", label:"Video Panduan", icon:"help" },
   { href:"index.html", label:"Portal NESACIS", icon:"home" },
 ];
@@ -1756,7 +1755,6 @@ async function cloudPullMerge(opts){
     }
     CLOUD.lastSync = Date.now(); CLOUD.lastPull = Date.now();
     if (CLOUD.dirty.size) scheduleFlush(300); else setSync("saved");
-    impUlangan(false);      // nilai ulangan online masuk otomatis ke Nilai (tanpa menunggu)
     return changed;
   }catch(e){
     console.error(e);
@@ -3147,6 +3145,7 @@ function renderScoreModalBody(){
           <label style="margin:0;">Isi Semua Nilai:</label>
           <input type="number" id="bulk-score-value" min="0" max="100" style="width:80px;padding:8px;border:1.5px solid var(--border);border-radius:8px;">
           <button class="btn btn-secondary btn-sm" id="btn-bulk-fill">Terapkan</button>
+          ${scoreSessionState.category === "Ulangan" ? `<button class="btn btn-secondary btn-sm" id="btn-pull-online" title="Isi nilai dari hasil ulangan online">Tarik Nilai Ulangan Online</button>` : ""}
         </div>
       </div>
       <div class="search-box" style="margin-bottom:12px;"><span class="ico">🔎</span><input type="text" id="score-search" placeholder="Cari nama siswa..." value="${escapeHtml(scoreSessionState.search)}"></div>
@@ -3204,6 +3203,7 @@ function renderScoreModalBody(){
     getVisibleScoreRecords().forEach(r=> r.nilai = Number(val));
     renderScoreModalBody();
   });
+  if ($("#btn-pull-online")) $("#btn-pull-online").addEventListener("click", tarikUlanganOnline);
   $("#sm-save").addEventListener("click", submitScores);
 }
 
@@ -4659,6 +4659,7 @@ async function importBackupFile(){
     console.error(e); Object.assign(appState, lama); hideLoading();
     return notifyError("Restore gagal: " + (e && e.message ? e.message : "file tidak dapat diproses") + ". Data lama tidak diubah.");
   }
+  hideLoading();      // seimbang dengan showLoading("Memulihkan data ke perangkat...")
   fileInput.value = "";
   navigateTo("dashboard");
 
@@ -5137,62 +5138,6 @@ async function openMateriViewer(m){
   ov.querySelector("#mv-close").onclick = ()=>{ ov.remove(); if (url) URL.revokeObjectURL(url); };
 }
 
-/* =========================================================================
-   NILAI ULANGAN ONLINE -> NILAI JURNAL (otomatis)
-   Hasil ulangan milik guru (siswa ber-NISN) dimasukkan sebagai nilai kategori "Ulangan" pada jurnal kelas yang sama
-   (jurnal terbaru pada/ sebelum tanggal ulangan, mapel cocok). Tidak menimpa nilai yang sudah ada, dan tiap hasil hanya
-   diimpor satu kali sehingga nilai yang sengaja dihapus guru tidak muncul lagi.
-   ========================================================================= */
-const ULIMP = { jalan:false, last:0 };
-function ulimpKey(){ return "jhgd_ulimp_" + ((CLOUD.session && CLOUD.session.email) || "") + "_" + (CLOUD.periode || ""); }
-async function impUlangan(manual){
-  if (ULIMP.jalan) return;
-  if (!manual && Date.now() - ULIMP.last < 120000) return;       // otomatis: paling sering tiap 2 menit
-  if (!CLOUD.session || !navigator.onLine){ if (manual) notifyWarning("Perlu koneksi internet."); return; }
-  ULIMP.jalan = true; ULIMP.last = Date.now();
-  try{
-    const r = await cloudCall({ action:"ul_nilai_guru" });
-    if (!r.ok){ if (r.auth === false){ handleSessionExpired(); return; } if (manual) notifyError(r.error || "Gagal mengambil nilai ulangan."); return; }
-    const h = importUlanganKeNilai(r.hasil || []);
-    if (h.baru){ persistScores(); if (canRerender()) renderPage(); }
-    if (manual || h.baru) {
-      const x = [];
-      if (h.baru) x.push(h.baru + " nilai ulangan masuk ke Nilai");
-      if (!h.baru && manual) x.push("Tidak ada nilai ulangan baru");
-      if (h.tanpaJurnal) x.push(h.tanpaJurnal + " hasil belum punya jurnal kelas/mapel yang cocok");
-      if (h.tanpaSiswa) x.push(h.tanpaSiswa + " siswa tidak cocok dengan Data Siswa (nama/NISN)");
-      (h.baru ? notifySuccess : notifyWarning)(x.join(". ") + ".");
-    }
-  }catch(e){ if (manual) notifyError(describeNetError(e)); }
-  finally{ ULIMP.jalan = false; }
-}
-function importUlanganKeNilai(hasil){
-  const nm = t=>String(t||"").toLowerCase().replace(/\s+/g," ").trim(), kk = t=>String(t||"").toUpperCase().replace(/[\s.\-_]/g,""), nk = t=>String(t||"").replace(/\D/g,"").replace(/^0+/,"");
-  let diimpor = new Set(); try{ diimpor = new Set(JSON.parse(localStorage.getItem(ulimpKey()) || "[]")); }catch(e){}
-  const stud = {}, byNK = {}, byN = {};
-  appState.students.forEach(s=>{ if (nk(s.nisn)) stud[nk(s.nisn)] = s; (byNK[nm(s.nama) + "|" + kk(s.kelas)] = byNK[nm(s.nama) + "|" + kk(s.kelas)] || []).push(s); (byN[nm(s.nama)] = byN[nm(s.nama)] || []).push(s); });
-  // siswa tanpa login tidak punya NISN: cocokkan lewat nama + kelas (atau nama saja bila hanya satu siswa bernama itu)
-  const cari = h=>{ if (h.nisn) return stud[nk(h.nisn)]; const a = byNK[nm(h.nama) + "|" + kk(h.kelas)]; if (a && a.length === 1) return a[0]; const b = byN[nm(h.nama)]; return b && b.length === 1 ? b[0] : null; };
-  const ada = new Set(appState.scores.filter(x=>x.kategori === "Ulangan").map(x=>x.journalId + "|" + nm(x.nama)));
-  const hasilAkhir = { baru:0, tanpaJurnal:0, tanpaSiswa:0 };
-  hasil.forEach(h=>{
-    const id = h.kode + "|" + (h.nisn ? nk(h.nisn) : "n:" + nm(h.nama) + "|" + kk(h.kelas));
-    if (diimpor.has(id)) return;
-    const s = cari(h); if (!s){ hasilAkhir.tanpaSiswa++; return; }
-    const tgl = new Date(h.waktu || Date.now()).toLocaleDateString("sv-SE");
-    const cocokMapel = j=>!h.mapel || !j.mataPelajaran || nm(j.mataPelajaran).includes(nm(h.mapel)) || nm(h.mapel).includes(nm(j.mataPelajaran));
-    const j = appState.journals.filter(x=>kk(x.kelas) === kk(s.kelas || h.kelas) && String(x.tanggal) <= tgl && cocokMapel(x)).sort((a,b)=>String(b.tanggal).localeCompare(String(a.tanggal)))[0];
-    if (!j){ hasilAkhir.tanpaJurnal++; return; }
-    diimpor.add(id);
-    const key = j.journalId + "|" + nm(s.nama);
-    if (ada.has(key)) return;                                  // sudah ada nilai Ulangan untuk siswa ini di jurnal tsb: jangan timpa
-    ada.add(key);
-    appState.scores.push({ journalId:j.journalId, kategori:"Ulangan", kelas:j.kelas, tanggal:j.tanggal, nama:s.nama, jenisKelamin:s.jenisKelamin || "", nilai:Math.round(Number(h.nilai) * 100) / 100, keterangan:"Ulangan Online [" + h.kode + "]: " + h.judul });
-    hasilAkhir.baru++;
-  });
-  try{ localStorage.setItem(ulimpKey(), JSON.stringify([...diimpor])); }catch(e){}
-  return hasilAkhir;
-}
 
 /* =========================================================================
    BOBOT NILAI AKHIR (per kategori) — dipakai di Hasil Belajarku murid.
@@ -5231,6 +5176,49 @@ function bindBobotEvents(){
     const b = { aktif:true }; BOBOT_KAT.forEach(k=>{ b[k] = Math.max(0, Number($("#bobot-"+k).value) || 0); });
     appState.settings.bobot = b; saveSettings(); notifySuccess("Bobot disimpan. Hasil Belajarku murid akan memakai bobot ini.");
   });
+}
+
+/* =========================================================================
+   TARIK NILAI ULANGAN ONLINE (Input Nilai > kategori Ulangan)
+   Mengisi kolom nilai dari hasil ulangan online kelas ini, dicocokkan dengan NISN siswa.
+   Bila siswa ikut remedial: nilai = rata-rata (utama + remedial tertinggi), tetapi tidak pernah di bawah nilai utama.
+   Nilai baru tersimpan setelah guru menekan "Simpan Nilai".
+   ========================================================================= */
+async function tarikUlanganOnline(){
+  syncScoreInputsToState();
+  const jr = scoreSessionState.journal, kk = t=>String(t||"").toUpperCase().replace(/[\s.\-_]/g,""), nm = t=>String(t||"").toLowerCase().replace(/\s+/g," ").trim(), nk = t=>String(t||"").replace(/\D/g,"").replace(/^0+/,"");
+  if (!navigator.onLine) return notifyWarning("Perlu koneksi internet untuk mengambil hasil ulangan online.");
+  showLoading("Mengambil hasil ulangan online...");
+  let r; try{ r = await cloudCall({ action:"ul_nilai_guru" }); }catch(e){ hideLoading(); return notifyError(describeNetError(e)); }
+  hideLoading();
+  if (!r.ok){ if (r.auth === false){ handleSessionExpired(); return; } return notifyError(r.error || "Gagal mengambil hasil ulangan online."); }
+  const tingkat = String(jr.kelas || "").trim().charAt(0);
+  let daftar = (r.ulangan || []).filter(u=>!u.tingkat || u.tingkat === tingkat);
+  const hitung = u=>(r.hasil || []).filter(h=>h.kode === u.kode && kk(h.kelas) === kk(jr.kelas)).length;
+  daftar.forEach(u=>{ u._n = hitung(u); });
+  daftar.sort((a,b)=>(b._n > 0) - (a._n > 0) || b.dibuat - a.dibuat);
+  if (!daftar.length) return notifyWarning("Belum ada ulangan online untuk kelas " + jr.kelas + ". Buat atau impor ulangannya di aplikasi Ulangan Online.");
+  const opsi = {}; daftar.forEach(u=>{ opsi[u.kode] = u.judul + " — " + (u.mapel || "tanpa mapel") + " (" + u._n + " siswa kelas " + jr.kelas + ")" + (u.remedial ? " · ada remedial" : ""); });
+  const pick = await Swal.fire({ title:"Pilih ulangan online", input:"select", inputOptions:opsi, inputValue:daftar[0].kode, showCancelButton:true, confirmButtonText:"Tarik Nilai", cancelButtonText:"Batal" });
+  if (!pick.isConfirmed || !pick.value) return;
+  const u = daftar.find(x=>x.kode === pick.value), hasilKelas = (r.hasil || []).filter(h=>h.kode === u.kode && kk(h.kelas) === kk(jr.kelas));
+  const stud = appState.students.filter(s=>kk(s.kelas) === kk(jr.kelas)), byNisn = {}, byNama = {};
+  stud.forEach(s=>{ if (nk(s.nisn)) byNisn[nk(s.nisn)] = s; byNama[nm(s.nama)] = s; });
+  const pakai = new Set(); let terisi = 0, tanpaCocok = 0;
+  hasilKelas.forEach(h=>{
+    const s = h.nisn ? byNisn[nk(h.nisn)] : byNama[nm(h.nama)];
+    const rec = s ? scoreSessionState.records.find(x=>nm(x.nama) === nm(s.nama)) : null;
+    if (!rec){ tanpaCocok++; return; }
+    rec.nilai = Number(h.nilai);
+    rec.keterangan = ("Ulangan online: " + u.judul + (h.remedial !== null && h.remedial !== undefined ? " (+remedial)" : "")).slice(0, 60);
+    pakai.add(nm(rec.nama)); terisi++;
+  });
+  const belum = scoreSessionState.records.filter(x=>!pakai.has(nm(x.nama))).length;
+  renderScoreModalBody();
+  const info = [terisi + " nilai terisi"];
+  if (belum) info.push(belum + " siswa belum punya hasil");
+  if (tanpaCocok) info.push(tanpaCocok + " hasil tidak cocok dengan daftar siswa kelas ini");
+  (terisi ? notifySuccess : notifyWarning)(info.join(", ") + ". Tekan Simpan Nilai untuk menyimpan.");
 }
 </script>
 </body>

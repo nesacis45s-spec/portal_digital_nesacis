@@ -14,7 +14,7 @@
 const S=NESACIS.wajib(['admin'],'admin');
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const TABS=[['ringkasan','Ringkasan'],['guru','Akun Guru & Admin'],['murid','Akun Murid'],['siswa','Data Siswa (NISN)'],['naik','Kenaikan Kelas'],['periode','Periode'],['materi','Materi'],['backup','Backup & Restore'],['sistem','Sistem']];
+const TABS=[['ringkasan','Ringkasan'],['guru','Akun Guru & Admin'],['murid','Akun Murid'],['siswa','Data Siswa (NISN)'],['naik','Kenaikan Kelas'],['periode','Periode'],['materi','Materi'],['imul','Impor Ulangan'],['backup','Backup & Restore'],['sistem','Sistem']];
 let TAB='ringkasan';
 const call=(a,d,o)=>NESACIS.call(a,d,o);
 const pesan=r=>NESACIS.pesan(r.error);
@@ -26,7 +26,7 @@ if(S){
   buka('ringkasan');
 }
 function buka(t){TAB=t;document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
-  $('view').innerHTML='<p class="empty">Memuat…</p>';({ringkasan:vRingkasan,guru:()=>vAkun('staf'),murid:()=>vAkun('murid'),siswa:vSiswa,naik:vNaik,periode:vPeriode,materi:vMateri,backup:vBackup,sistem:vSistem})[t]()}
+  $('view').innerHTML='<p class="empty">Memuat…</p>';({ringkasan:vRingkasan,guru:()=>vAkun('staf'),murid:()=>vAkun('murid'),siswa:vSiswa,naik:vNaik,periode:vPeriode,materi:vMateri,imul:vImul,backup:vBackup,sistem:vSistem})[t]()}
 
 /* ---------- modal ---------- */
 function modal(html,onOk,okText){
@@ -251,6 +251,74 @@ async function vNaik(){
 }
 function vNaikRefresh(){setTimeout(()=>{const m=$('nm2').innerHTML;vNaik().then(()=>{$('nm2').innerHTML=m})},300)}
 
+
+/* ---------- impor data ulangan dari Excel (mis. dari aplikasi ulangan lama) ---------- */
+const IMUL={};
+const hdr=(o,...ns)=>{for(const n of ns){for(const k of Object.keys(o))if(String(k).trim().toLowerCase()===n.toLowerCase())return o[k]}return ''};
+function msTgl(v){
+  if(v===''||v==null)return 0;
+  if(v instanceof Date)return isNaN(v)?0:v.getTime();
+  if(typeof v==='number')return v>20000&&v<80000?Math.round((v-25569)*86400000):0;   // serial tanggal Excel
+  const t=Date.parse(String(v).trim().replace(' ','T'));return isNaN(t)?0:t;
+}
+const angka=v=>{const n=Number(String(v==null?'':v).replace(',','.'));return isFinite(n)&&String(v).trim()!==''?n:''};
+function bacaSheet(wb,nama){
+  const k=wb.SheetNames.find(n=>n.trim().toLowerCase()===nama.toLowerCase());if(!k)return [];
+  return XLSX.utils.sheet_to_json(wb.Sheets[k],{defval:'',raw:true});
+}
+async function vImul(){
+  $('view').innerHTML=`<h1>Impor Data Ulangan dari Excel</h1>
+  <p class="mut">Unggah berkas Excel hasil ekspor aplikasi ulangan (sheet <b>Ulangan</b>, <b>Soal</b>, dan <b>Peserta</b>). Ulangan, soal, dan hasil siswa dimasukkan ke aplikasi ini. Nama siswa dicocokkan ke <b>Data Siswa</b> (kelas + nama) agar NISN terisi dan nilai dapat ditarik ke jurnal guru. Kolom lain (mis. Kode Lama) diabaikan.</p>
+  <div class="card"><input type="file" id="imf" accept=".xlsx,.xls"><div id="imm"></div></div>
+  <div id="imp-prev"></div>
+  <div class="card"><h2>Hasil ulangan tanpa NISN</h2><p class="mut">Setelah Data Siswa dilengkapi, cocokkan ulang hasil ulangan yang belum punya NISN.</p><button class="btn sec" id="imc">Cocokkan ulang</button><div id="imcm" style="margin-top:8px"></div></div>`;
+  $('imf').onchange=imulBaca;
+  $('imc').onclick=async()=>{$('imc').disabled=true;const x=await call('ad_ul_cocokkan',{},{timeout:240000});$('imc').disabled=false;$('imcm').innerHTML=x.ok?`<div class="msg ok">${x.dicek} hasil diperiksa, ${x.cocok} berhasil dicocokkan.</div>`:`<div class="msg err">${esc(pesan(x))}</div>`};
+}
+async function imulBaca(){
+  const f=$('imf').files[0];if(!f)return;$('imm').innerHTML='<p class="mut">Membaca berkas…</p>';
+  try{
+    await xlsx();const wb=XLSX.read(await f.arrayBuffer(),{type:'array',cellDates:true});
+    const U=bacaSheet(wb,'Ulangan'),S=bacaSheet(wb,'Soal'),P=bacaSheet(wb,'Peserta');
+    if(!U.length)throw new Error('Sheet "Ulangan" tidak ditemukan atau kosong. Pastikan memilih berkas ekspor aplikasi ulangan.');
+    IMUL.ul=U.filter(r=>String(hdr(r,'Kode')).trim()).map(r=>({kode:String(hdr(r,'Kode')).trim().toUpperCase(),judul:String(hdr(r,'Judul')),pemilik:String(hdr(r,'Pemilik')).trim().toLowerCase(),durasi:angka(hdr(r,'Durasi (menit)','Durasi')),jumlah:angka(hdr(r,'Jumlah Soal (0=semua)','Jumlah Soal')),maks:angka(hdr(r,'Maks Pelanggaran')),aktif:String(hdr(r,'Dibuka')).toUpperCase(),tampil:String(hdr(r,'Tampil Nilai')).toUpperCase(),kkm:angka(hdr(r,'KKM')),kelas:String(hdr(r,'Daftar Kelas')),maxAbsen:angka(hdr(r,'Maks No Absen')),dibuat:msTgl(hdr(r,'Dibuat')),acak:String(hdr(r,'Acak Berimbang Level')).toUpperCase(),urut:String(hdr(r,'Urut Mudah-Sulit')).toUpperCase(),mapel:String(hdr(r,'Mata Pelajaran')),tingkat:String(hdr(r,'Tingkat')).replace(/\.0$/,'')}));
+    IMUL.so=S.filter(r=>String(hdr(r,'Kode')).trim()&&String(hdr(r,'Soal')).trim()).map(r=>({kode:String(hdr(r,'Kode')).trim().toUpperCase(),no:angka(hdr(r,'No')),soal:String(hdr(r,'Soal')),a:String(hdr(r,'A')),b:String(hdr(r,'B')),c:String(hdr(r,'C')),d:String(hdr(r,'D')),kunci:String(hdr(r,'Kunci')).trim().toUpperCase(),level:String(hdr(r,'Level')),gambar:String(hdr(r,'URL Gambar','Gambar'))}));
+    IMUL.pe=P.filter(r=>String(hdr(r,'Token')).trim()).map(r=>({token:String(hdr(r,'Token')),key:String(hdr(r,'Kunci Siswa')),kode:String(hdr(r,'Kode')).trim().toUpperCase(),nama:String(hdr(r,'Nama')),kelas:String(hdr(r,'Kelas')),absen:String(hdr(r,'Absen')).replace(/\.0$/,''),status:String(hdr(r,'Status')),mulai:msTgl(hdr(r,'Mulai')),ids:String(hdr(r,'Soal Terpilih')),selesai:msTgl(hdr(r,'Selesai')),aktif:msTgl(hdr(r,'Aktivitas Terakhir')),terjawab:angka(hdr(r,'Terjawab')),no:angka(hdr(r,'Soal Saat Ini')),pelanggaran:angka(hdr(r,'Pelanggaran')),log:String(hdr(r,'Log Pelanggaran')),jawaban:String(hdr(r,'Jawaban')),benar:angka(hdr(r,'Benar')),salah:angka(hdr(r,'Salah')),kosong:angka(hdr(r,'Kosong')),nilai:angka(hdr(r,'Nilai')),durasi:angka(hdr(r,'Durasi (menit)')),alasan:String(hdr(r,'Alasan Selesai'))}));
+    const [cek,ak]=await Promise.all([call('ad_ul_impor_cek',{kodes:IMUL.ul.map(u=>u.kode)}),call('ad_akun_list',{peran:'staf'})]);
+    if(!cek.ok)throw new Error(pesan(cek));if(!ak.ok)throw new Error(pesan(ak));
+    const staf=ak.akun.filter(a=>a.aktif).map(a=>a.username),pemilik=[...new Set(IMUL.ul.map(u=>u.pemilik))];
+    const nSoal=k=>IMUL.so.filter(s=>s.kode===k).length,nPes=k=>IMUL.pe.filter(p=>p.kode===k&&p.status==='SELESAI').length;
+    $('imm').innerHTML='';
+    $('imp-prev').innerHTML=`<div class="card"><h2>Pratinjau</h2>
+      <div class="tw"><table><thead><tr><th>Kode</th><th>Judul</th><th>Mapel / Kelas</th><th>Soal</th><th>Hasil siswa</th><th>Status</th></tr></thead><tbody>${IMUL.ul.map(u=>`<tr><td><b>${esc(u.kode)}</b></td><td>${esc(u.judul)}</td><td>${esc(u.mapel)} · ${esc(u.tingkat)}</td><td>${nSoal(u.kode)}</td><td>${nPes(u.kode)}</td><td>${cek.ada.includes(u.kode)?'<span class="badge bad">Sudah ada</span>':'<span class="badge ok">Baru</span>'}</td></tr>`).join('')}</tbody></table></div>
+      <h2 style="margin-top:14px">Pemilik ulangan</h2><p class="mut">Pilih akun guru yang akan memiliki ulangan ini di aplikasi baru.</p>
+      ${pemilik.map(p=>`<div class="row" style="margin-bottom:6px"><span style="min-width:170px">${esc(p||'(kosong)')} →</span><select data-pm="${esc(p)}">${staf.map(s=>`<option ${s===p?'selected':''}>${esc(s)}</option>`).join('')}</select></div>`).join('')}
+      <label style="display:flex;gap:8px;align-items:center;margin:10px 0 4px"><input type="checkbox" id="im-pes" checked style="width:auto"> Impor juga hasil siswa (${IMUL.pe.filter(p=>p.status!=='RESET').length} baris)</label>
+      <label style="display:flex;gap:8px;align-items:center;margin:4px 0 12px"><input type="checkbox" id="im-timpa" style="width:auto"> Timpa ulangan yang kodenya sudah ada (soal dan hasil lamanya dihapus)</label>
+      <button class="btn" id="im-go">Impor sekarang</button><div class="card" id="im-pg" hidden style="margin-top:12px"><div class="bar"><i id="im-pb" style="width:0"></i></div><p class="mut" id="im-pt"></p></div><div id="im-hasil"></div></div>`;
+    $('im-go').onclick=imulJalan;
+  }catch(e){$('imm').innerHTML=`<div class="msg err">${esc(e.message||e)}</div>`;$('imp-prev').innerHTML=''}
+}
+async function imulJalan(){
+  const b=$('im-go');b.disabled=true;$('im-pg').hidden=false;
+  const prog=(p,t)=>{$('im-pb').style.width=Math.round(p*100)+'%';$('im-pt').textContent=t};
+  try{
+    const pemilik={};document.querySelectorAll('[data-pm]').forEach(s=>{pemilik[s.dataset.pm]=s.value});
+    prog(.02,'Mengimpor ulangan…');
+    const r1=await call('ad_ul_impor',{tahap:'ulangan',rows:IMUL.ul,pemilik,timpa:$('im-timpa').checked},{timeout:120000});if(!r1.ok)throw new Error(pesan(r1));
+    const kodes=r1.diimpor;let so=0,pes={ditulis:0,cocok:0,tanpaNisn:0,ganda:0},tak=[];
+    const rs=IMUL.so.filter(s=>kodes.includes(s.kode)),rp=$('im-pes').checked?IMUL.pe.filter(p=>kodes.includes(p.kode)):[];
+    const total=rs.length+rp.length||1;let sudah=0;
+    for(let i=0;i<rs.length;i+=120){const x=await call('ad_ul_impor',{tahap:'soal',rows:rs.slice(i,i+120),kodes},{timeout:120000});if(!x.ok)throw new Error(pesan(x));so+=x.ditulis;sudah+=Math.min(120,rs.length-i);prog(.05+.9*sudah/total,`Mengimpor soal… ${so}`)}
+    for(let i=0;i<rp.length;i+=80){const x=await call('ad_ul_impor',{tahap:'peserta',rows:rp.slice(i,i+80),kodes},{timeout:120000});if(!x.ok)throw new Error(pesan(x));['ditulis','cocok','tanpaNisn','ganda'].forEach(k=>pes[k]+=x[k]);tak=tak.concat(x.contohTakCocok||[]);sudah+=Math.min(80,rp.length-i);prog(.05+.9*sudah/total,`Mengimpor hasil siswa… ${pes.ditulis}`)}
+    await call('ad_ul_impor',{tahap:'selesai',rows:[],kodes},{timeout:120000});prog(1,'Selesai.');
+    $('im-hasil').innerHTML=`<div class="msg ok"><b>${kodes.length}</b> ulangan, <b>${so}</b> soal, dan <b>${pes.ditulis}</b> hasil siswa diimpor.${r1.dilewati.length?'<br>Dilewati: '+esc(r1.dilewati.join(', ')):''}${pes.ganda?'<br>'+pes.ganda+' hasil dilewati karena sudah ada.':''}</div>
+      ${pes.ditulis?`<div class="msg ${pes.tanpaNisn?'err':'ok'}">NISN terisi otomatis untuk <b>${pes.cocok}</b> dari ${pes.ditulis} hasil (${Math.round(pes.cocok/pes.ditulis*100)}%).${pes.tanpaNisn?`<br>${pes.tanpaNisn} hasil belum cocok dengan Data Siswa (nama berbeda atau belum ada di daftar), contoh: ${esc(tak.slice(0,8).join('; '))}. Lengkapi/perbaiki Data Siswa lalu klik <b>Cocokkan ulang</b>.`:''}</div>`:''}
+      <p class="mut">Ulangan yang diimpor berstatus <b>sesuai file</b>. Atur buka/tutup lewat saklar di kartu ulangan.</p>`;
+  }catch(e){$('im-pt').textContent='Gagal: '+(e.message||e);$('im-hasil').innerHTML=`<div class="msg err">${esc(e.message||e)}</div>`}
+  finally{b.disabled=false}
+}
+
 /* ---------- periode ---------- */
 async function vPeriode(){
   const r=await call('ad_ringkasan');if(!r.ok)return $('view').innerHTML=`<div class="msg err">${esc(pesan(r))}</div>`;
@@ -356,9 +424,9 @@ async function vSistem(){
   const r=await call('ad_ringkasan');if(!r.ok)return $('view').innerHTML=`<div class="msg err">${esc(pesan(r))}</div>`;
   $('view').innerHTML=`<h1>Sistem</h1>
   <div class="card"><h2>Bobot nilai akhir &amp; ketuntasan</h2>
-   <p class="mut">Dipakai di Hasil Belajarku murid. Guru dapat memakai bobot kategori sendiri di pengaturan Jurnal. Kategori yang belum punya nilai dilewati dan bobotnya dibagi proporsional.</p>
+   <p class="mut">Nilai Akhir murid = rata-rata nilai mata pelajaran, tiap mata pelajaran dihitung dari bobot kategori di bawah. Hasil ulangan online masuk lewat kolom Ulangan (guru menariknya di Input Nilai). Guru dapat memakai bobot kategori sendiri di pengaturan Jurnal. Kategori tanpa nilai dilewati dan bobotnya dibagi proporsional.</p>
    <div class="fgrid" id="bw"></div><p class="mut" id="bw-total" style="margin:8px 0"></p>
-   <div class="fgrid"><div><label>Bobot Nilai dari Guru (%)</label><input id="bw-guru" type="number" min="0" max="100"></div><div><label>Bobot Ulangan Online (%)</label><input id="bw-online" type="number" disabled></div><div><label>Batas ketuntasan (tidak ditampilkan ke murid)</label><input id="bw-kkm" type="number" min="1" max="100"></div></div>
+   <div class="fgrid"><div><label>Batas ketuntasan (tidak ditampilkan ke murid)</label><input id="bw-kkm" type="number" min="1" max="100"></div></div>
    <div class="row" style="margin-top:12px"><button class="btn" id="bw-simpan">Simpan bobot</button></div><div id="bw-msg"></div></div>
   <div class="card"><h2>Ubah password saya</h2><div class="row"><input id="p1" type="password" placeholder="Password lama" class="grow"><input id="p2" type="password" placeholder="Password baru (min. 6)" class="grow"><button class="btn" id="pw">Simpan</button></div><div id="pm"></div></div>
   <div class="card"><h2>Rekap Hasil Belajar murid</h2><p class="mut">Rekap diperbarui otomatis setiap guru menyimpan, sehingga halaman Hasil Belajarku cepat. Bangun ulang rekap bila Anda baru memulihkan backup lama atau memindahkan data dari aplikasi sebelumnya.</p>
@@ -368,11 +436,11 @@ async function vSistem(){
   const bwr=await call('ad_bobot_info');
   if(bwr.ok){const K=['Ulangan','Tugas','Keaktifan','Sikap'];
     $('bw').innerHTML=K.map(k=>`<div><label>${k} (%)</label><input type="number" min="0" max="100" data-bw="${k}" value="${bwr.kategori[k]}"></div>`).join('');
-    $('bw-guru').value=bwr.guru;$('bw-online').value=100-bwr.guru;$('bw-kkm').value=bwr.kkm;
-    const tot=()=>{const t=K.reduce((s,k)=>s+(Number(document.querySelector(`[data-bw=${k}]`).value)||0),0);$('bw-total').innerHTML='Total bobot kategori: <b>'+t+'%</b> '+(t===100?'✓':'(harus 100%)');$('bw-online').value=100-(Number($('bw-guru').value)||0);return t};
-    tot();$('bw').oninput=tot;$('bw-guru').oninput=tot;
+    $('bw-kkm').value=bwr.kkm;
+    const tot=()=>{const t=K.reduce((s,k)=>s+(Number(document.querySelector(`[data-bw=${k}]`).value)||0),0);$('bw-total').innerHTML='Total bobot kategori: <b>'+t+'%</b> '+(t===100?'✓':'(harus 100%)');return t};
+    tot();$('bw').oninput=tot;
     $('bw-simpan').onclick=async()=>{const kat={};K.forEach(k=>kat[k]=Number(document.querySelector(`[data-bw=${k}]`).value)||0);
-      const x=await call('ad_bobot_simpan',{kategori:kat,guru:Number($('bw-guru').value),kkm:Number($('bw-kkm').value)});
+      const x=await call('ad_bobot_simpan',{kategori:kat,kkm:Number($('bw-kkm').value)});
       $('bw-msg').innerHTML=x.ok?'<div class="msg ok">Bobot disimpan. Hasil Belajarku memakai nilai ini (cache hingga 30 detik).</div>':`<div class="msg err">${esc(pesan(x))}</div>`}}
   $('rp').innerHTML=r.periodes.map(p=>`<option value="${esc(p.id)}" ${p.aktif?'selected':''}>${esc(p.label)}</option>`).join('');
   $('rb').onclick=async()=>{const b=$('rb');b.disabled=true;const x=await call('ad_rekap_bangun',{periode:$('rp').value},{timeout:240000});b.disabled=false;$('rm').innerHTML=x.ok?`<div class="msg ok">Selesai: ${x.guru} guru, ${x.murid} murid.</div>`:`<div class="msg err">${esc(pesan(x))}</div>`};
