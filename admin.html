@@ -49,8 +49,9 @@ async function vRingkasan(){
   const r=await call('ad_ringkasan');if(!r.ok)return $('view').innerHTML=`<div class="msg err">${esc(pesan(r))}</div>`;
   const c=[['Guru',r.guru],['Murid terdaftar',r.murid],['Admin',r.admin],['Siswa di data sekolah',r.siswa],['Periode',r.periode],['Ulangan',r.ulangan],['Hasil ulangan',r.hasil],['Materi',r.materi]];
   const nm={akun:'Akun',jurnal:'Jurnal',nilai:'Nilai',absensi:'Absensi',ulangan:'Ulangan',materi:'Materi'};
-  $('view').innerHTML=`<h1>Ringkasan</h1><div class="grid">${c.map(x=>`<div class="tile" style="cursor:default"><span>${x[0]}</span><div class="stat">${x[1]}</div></div>`).join('')}</div>
-  <div class="card" style="margin-top:14px"><h2>6 file database</h2><p class="mut">Semua data tersimpan di spreadsheet berikut (dibuka lewat akun pemilik skrip). Jangan ubah isinya manual saat aplikasi dipakai.</p>
+  const peringatan=(r.fungsiHilang&&r.fungsiHilang.length)?`<div class="msg err"><b>File backend belum lengkap.</b> Fungsi tidak ditemukan: ${esc(r.fungsiHilang.join(', '))}. Tempel ulang SEMUA file .gs dari paket terbaru (terutama yang memuat fungsi itu), simpan, lalu buat versi deployment baru. Setelah itu fitur terkait akan berfungsi.</div>`:'';
+  $('view').innerHTML=`${peringatan}<h1>Ringkasan</h1><div class="grid">${c.map(x=>`<div class="tile" style="cursor:default"><span>${x[0]}</span><div class="stat">${x[1]}</div></div>`).join('')}</div>
+  <div class="card" style="margin-top:14px"><h2>6 file database</h2><p class="mut" style="margin:0 0 6px">Versi backend: <b>${esc(r.versi||'-')}</b></p><p class="mut">Semua data tersimpan di spreadsheet berikut (dibuka lewat akun pemilik skrip). Jangan ubah isinya manual saat aplikasi dipakai.</p>
   <div class="row">${Object.keys(r.urls).map(k=>`<a class="btn sec sm" href="${esc(r.urls[k])}" target="_blank" rel="noopener">${nm[k]} ↗</a>`).join('')}</div></div>`;
 }
 
