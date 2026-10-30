@@ -5144,16 +5144,16 @@ async function openMateriViewer(m){
    Default sekolah diatur admin; guru boleh memakai bobot sendiri untuk mata pelajarannya.
    Kategori yang belum punya nilai dilewati dan bobotnya dibagi proporsional.
    ========================================================================= */
-const BOBOT_KAT = ["Ulangan","Tugas","Keaktifan","Sikap"];
-let BOBOT_DEF = { Ulangan:40, Tugas:30, Keaktifan:15, Sikap:15 };
+const BOBOT_KAT = ["Ulangan","Tugas","Keaktifan","Sikap","Kehadiran"];
+let BOBOT_DEF = { Ulangan:35, Tugas:25, Keaktifan:15, Sikap:15, Kehadiran:10 };
 function bobotSaatIni(){ const b = appState.settings.bobot; return b && b.aktif ? b : Object.assign({ aktif:false }, BOBOT_DEF); }
 function renderBobotCard(){
   const b = bobotSaatIni();
   return `<div class="card" style="max-width:560px;" id="bobot-card">
       <h3 class="card-title" style="margin-bottom:4px;">Bobot Nilai Akhir</h3>
-      <p class="small-muted" style="margin:0 0 12px;">Nilai akhir tiap mata pelajaran di Hasil Belajarku murid = rata-rata per kategori × bobot. Kategori yang belum punya nilai dilewati (bobotnya dibagi proporsional).</p>
+      <p class="small-muted" style="margin:0 0 12px;">Nilai tiap mata pelajaran di Hasil Belajarku murid = rata-rata per kategori × bobot. <b>Kehadiran</b> = persentase hadir murid pada mata pelajaran ini (dari Absensi). Kategori yang belum punya data dilewati (bobotnya dibagi proporsional).</p>
       <label style="display:flex;gap:8px;align-items:center;margin-bottom:10px;"><input type="checkbox" id="bobot-on" ${b.aktif ? "checked" : ""}> Pakai bobot sendiri (bukan default sekolah)</label>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px;">
         ${BOBOT_KAT.map(k=>`<div><label class="small-muted" for="bobot-${k}">${k} (%)</label><input type="number" min="0" max="100" step="1" id="bobot-${k}" value="${b[k]}" ${b.aktif ? "" : "disabled"} style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:9px;"></div>`).join("")}
       </div>
       <p class="small-muted" id="bobot-total" style="margin:8px 0 12px;"></p>
